@@ -6820,6 +6820,9 @@ spec:
                       - name
                       type: object
                     type: array
+                  reservedPodMemoryPercent:
+                    format: int32
+                    type: integer
                   nodeSelector:
                     additionalProperties:
                       type: string

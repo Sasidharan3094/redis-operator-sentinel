@@ -45,6 +45,10 @@ func (r *RedisFailover) Validate() error {
 		r.Spec.Redis.Port = defaultRedisPort
 	}
 
+	if r.Spec.Redis.ReservedPodMemoryPercent <= 0 {
+		r.Spec.Redis.ReservedPodMemoryPercent = defaultReservedPodMemoryPercent
+	}
+
 	if r.Spec.Sentinel.Replicas <= 0 {
 		r.Spec.Sentinel.Replicas = defaultSentinelNumber
 	}

@@ -1,6 +1,9 @@
 package service
 
 import (
+	"fmt"
+	"strings"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
@@ -116,11 +119,124 @@ func (r *RedisFailoverKubeClient) EnsureRedisStatefulset(rf *redisfailoverv1.Red
 			return err
 		}
 	}
+
+	// Check and validate StatefulSet before creation/update
+	if err := r.checkAndValidateStatefulSet(rf); err != nil {
+		return err
+	}
+
+	// Generate and create/update StatefulSet
 	ss := generateRedisStatefulSet(rf, labels, ownerRefs)
 	err := r.K8SService.CreateOrUpdateStatefulSet(rf.Namespace, ss)
 
 	r.setEnsureOperationMetrics(ss.Namespace, ss.Name, "StatefulSet", rf.Name, err)
 	return err
+}
+
+// checkAndValidateStatefulSet checks if StatefulSet exists and validates maxmemory configuration
+// Returns error if validation fails for new StatefulSet creation, logs warning for existing StatefulSets
+func (r *RedisFailoverKubeClient) checkAndValidateStatefulSet(rf *redisfailoverv1.RedisFailover) error {
+	// Check if StatefulSet already exists
+	existingStatefulSet, err := r.K8SService.GetStatefulSet(rf.Namespace, GetRedisName(rf))
+	statefulSetExists := err == nil && existingStatefulSet != nil
+
+	// Run all validation checks
+	// Add more validation functions here as needed
+	isValidConfig := true
+	var validationErrors []string
+
+	// Validation 1: Validate maxmemory configuration
+	if !r.validateMaxMemoryConfig(rf) {
+		isValidConfig = false
+		validationErrors = append(validationErrors, "maxmemory configuration exceeds allowed memory limits")
+	}
+
+	// Validation 2: Add more validations here in the future
+	// Example:
+	// if !r.validateSomeOtherConfig(rf) {
+	//     isValidConfig = false
+	//     validationErrors = append(validationErrors, "some other validation failed")
+	// }
+
+	// Handle validation failures
+	if !isValidConfig {
+		validationMsg := strings.Join(validationErrors, "; ")
+
+		if statefulSetExists {
+			// StatefulSet already exists - log warning and continue
+			// Invalid configs will be filtered out when applying configs to running pods
+			r.logger.WithField("redisfailover", rf.Name).WithField("namespace", rf.Namespace).Warningf("Configuration validation failed: %s. Invalid configs will be skipped when applying to running pods", validationMsg)
+
+			// Record metric for validation warning on existing StatefulSet
+			validationErr := fmt.Errorf("configuration validation warning: %s", validationMsg)
+			r.setEnsureOperationMetrics(rf.Namespace, GetRedisName(rf), "StatefulSet", rf.Name, validationErr)
+
+			return nil
+		} else {
+			// StatefulSet doesn't exist yet - block creation
+			err := fmt.Errorf("configuration validation failed for RedisFailover %s: %s. Cannot create StatefulSet with invalid configuration", rf.Name, validationMsg)
+			r.setEnsureOperationMetrics(rf.Namespace, GetRedisName(rf), "StatefulSet", rf.Name, err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateMaxMemoryConfig validates maxmemory configuration against CRD spec memory
+func (r *RedisFailoverKubeClient) validateMaxMemoryConfig(rf *redisfailoverv1.RedisFailover) bool {
+	// Get memory from CRD spec (prioritize Requests over Limits)
+	var crdMemory int64
+
+	// First priority: Check Requests
+	if rf.Spec.Redis.Resources.Requests != nil {
+		if memRequest := rf.Spec.Redis.Resources.Requests.Memory(); memRequest != nil {
+			crdMemory = memRequest.Value()
+		}
+	}
+
+	// Second priority: If Requests is 0, check Limits
+	if crdMemory == 0 && rf.Spec.Redis.Resources.Limits != nil {
+		if memLimit := rf.Spec.Redis.Resources.Limits.Memory(); memLimit != nil {
+			crdMemory = memLimit.Value()
+		}
+	}
+
+	// If no memory limits/requests specified, allow creation
+	if crdMemory == 0 {
+		return true
+	}
+
+	// Get the memory overhead percentage (default is 10%)
+	reservedPodMemoryPercent := rf.Spec.Redis.ReservedPodMemoryPercent
+	if reservedPodMemoryPercent <= 0 {
+		reservedPodMemoryPercent = 10 // Default overhead
+	}
+
+	// Check each custom config line for maxmemory
+	for _, configLine := range rf.Spec.Redis.CustomConfig {
+		if strings.HasPrefix(configLine, "maxmemory ") {
+			// Parse maxmemory value
+			parts := strings.Fields(configLine)
+			if len(parts) >= 2 {
+				maxMemoryStr := parts[1]
+				maxMemoryBytes, err := ParseMemorySize(maxMemoryStr)
+				if err != nil {
+					// Invalid memory format, reject
+					return false
+				}
+
+				// Calculate allowed memory: CRD memory * (100 - overhead) / 100
+				allowedMemory := crdMemory * int64(100-reservedPodMemoryPercent) / 100
+				if maxMemoryBytes > allowedMemory {
+					// maxmemory exceeds overhead limit, reject
+					return false
+				}
+			}
+		}
+	}
+
+	return true // Valid configuration
 }
 
 // EnsureRedisConfigMap makes sure the Redis ConfigMap exists

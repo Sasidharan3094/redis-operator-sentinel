@@ -2,8 +2,10 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	redisfailoverv1 "github.com/freshworks/redis-operator/api/redisfailover/v1"
 	"github.com/freshworks/redis-operator/log"
@@ -313,8 +315,155 @@ func (r *RedisFailoverHealer) SetRedisCustomConfig(ip string, rf *redisfailoverv
 		return err
 	}
 
+	// Get memory usage for this Redis pod
+	podMemory, err := r.getRedisPodMemoryUsage(ip, rf)
+	if err != nil {
+		r.logger.WithField("redisfailover", rf.ObjectMeta.Name).WithField("namespace", rf.ObjectMeta.Namespace).Warningf("Failed to get memory usage for Redis IP %s: %v", ip, err)
+		// Continue with podMemory = 0, which will skip memory validation
+	}
+
+	// Validate and filter maxmemory configuration
+	validatedConfig, err := r.validateMaxMemoryConfig(rf.Spec.Redis.CustomConfig, podMemory, ip, rf)
+	if err != nil {
+		r.logger.WithField("redisfailover", rf.ObjectMeta.Name).WithField("namespace", rf.ObjectMeta.Namespace).Errorf("maxmemory validation failed for Redis IP %s: %v", ip, err)
+	}
+
 	port := getRedisPort(rf.Spec.Redis.Port)
-	return r.redisClient.SetCustomRedisConfig(ip, port, rf.Spec.Redis.CustomConfig, password)
+	return r.redisClient.SetCustomRedisConfig(ip, port, validatedConfig, password)
+}
+
+// getRedisPodMemoryUsage retrieves the memory limit or request for a Redis pod by its IP
+func (r *RedisFailoverHealer) getRedisPodMemoryUsage(redisIP string, rf *redisfailoverv1.RedisFailover) (int64, error) {
+	// Get the specific pod by listing with field selector for IP
+	pods, err := r.k8sService.ListPodsWithFieldSelector(rf.Namespace, "status.podIP="+redisIP)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get pod with IP %s: %w", redisIP, err)
+	}
+
+	if len(pods.Items) == 0 {
+		return 0, fmt.Errorf("no pod found with IP %s", redisIP)
+	}
+
+	// Use the first pod (there should only be one with a specific IP)
+	targetPod := pods.Items[0]
+
+	// Check if the pod is running
+	if targetPod.Status.Phase != v1.PodRunning {
+		return 0, fmt.Errorf("pod %s is not running, current phase: %s", targetPod.Name, targetPod.Status.Phase)
+	}
+
+	// Get configured memory from pod spec (prioritize Requests over Limits)
+	for _, container := range targetPod.Spec.Containers {
+		if container.Name == "redis" {
+			// First priority: Check Requests
+			if memRequest := container.Resources.Requests.Memory(); memRequest != nil {
+				return memRequest.Value(), nil
+			}
+			// Second priority: Check Limits
+			if memLimit := container.Resources.Limits.Memory(); memLimit != nil {
+				return memLimit.Value(), nil
+			}
+		}
+	}
+
+	// If no resource limits/requests are set, return 0 (validation will be skipped)
+	return 0, fmt.Errorf("no memory configuration found for pod %s", targetPod.Name)
+}
+
+// validateMaxMemoryConfig validates maxmemory configuration against pod memory using percentage-based threshold
+func (r *RedisFailoverHealer) validateMaxMemoryConfig(customConfig []string, podMemory int64, ip string, rf *redisfailoverv1.RedisFailover) ([]string, error) {
+	validatedConfig := make([]string, 0, len(customConfig))
+	var validationErrors []error
+
+	// Get the memory overhead percentage (default is 10%)
+	reservedPodMemoryPercent := rf.Spec.Redis.ReservedPodMemoryPercent
+	if reservedPodMemoryPercent <= 0 {
+		reservedPodMemoryPercent = 10 // fallback to default if not set properly
+	}
+
+	for _, configLine := range customConfig {
+		// Check if this is a maxmemory configuration line (not maxmemory-policy or other maxmemory-* directives)
+		if strings.HasPrefix(configLine, "maxmemory ") {
+			// Parse maxmemory value
+			parts := strings.Fields(configLine)
+			if len(parts) >= 2 {
+				maxMemoryStr := parts[1]
+				maxMemoryBytes, err := ParseMemorySize(maxMemoryStr)
+				if err != nil {
+					r.logger.WithField("redisfailover", rf.ObjectMeta.Name).WithField("namespace", rf.ObjectMeta.Namespace).Warningf("Failed to parse maxmemory value '%s' for Redis IP %s: %v, skipping this config line", maxMemoryStr, ip, err)
+					validationErrors = append(validationErrors, fmt.Errorf("invalid maxmemory configuration '%s': %w", configLine, err))
+					continue // Skip this invalid config line but continue with others
+				}
+
+				// Calculate allowed memory: pod memory * (100 - threshold) / 100
+				// For example: if reservedPodMemoryPercent is 10%, then allowed memory is only 90% of pod memory
+				if podMemory > 0 {
+					allowedMemory := podMemory * int64(100-reservedPodMemoryPercent) / 100
+					if maxMemoryBytes > allowedMemory {
+						r.logger.WithField("redisfailover", rf.ObjectMeta.Name).WithField("namespace", rf.ObjectMeta.Namespace).Errorf("maxmemory configuration %d bytes exceeds allowed limit %d bytes (%d%% of pod memory %d bytes, overhead: %d%%) for Redis IP %s, skipping this config line", maxMemoryBytes, allowedMemory, 100-reservedPodMemoryPercent, podMemory, reservedPodMemoryPercent, ip)
+						validationErrors = append(validationErrors, fmt.Errorf("maxmemory %d bytes exceeds allowed limit %d bytes (%d%% of pod memory %d bytes, overhead: %d%%)", maxMemoryBytes, allowedMemory, 100-reservedPodMemoryPercent, podMemory, reservedPodMemoryPercent))
+						continue // Skip this invalid maxmemory line but continue with others
+					}
+				}
+			}
+		}
+
+		// Add all valid configurations (including valid maxmemory and all other configs like maxmemory-policy)
+		validatedConfig = append(validatedConfig, configLine)
+	}
+
+	// Combine all validation errors into a single error
+	if len(validationErrors) > 0 {
+		return validatedConfig, errors.Join(validationErrors...)
+	}
+
+	return validatedConfig, nil
+}
+
+// ParseMemorySize parses Redis memory size strings (e.g., "1gb", "512mb", "1024")
+func ParseMemorySize(sizeStr string) (int64, error) {
+	sizeStr = strings.ToLower(strings.TrimSpace(sizeStr))
+
+	// Handle plain numbers (bytes)
+	if val, err := strconv.ParseInt(sizeStr, 10, 64); err == nil {
+		return val, nil
+	}
+
+	// Handle suffixed values
+	var multiplier int64 = 1
+	var numStr string
+
+	if strings.HasSuffix(sizeStr, "gb") || strings.HasSuffix(sizeStr, "g") {
+		multiplier = 1024 * 1024 * 1024
+		if strings.HasSuffix(sizeStr, "gb") {
+			numStr = sizeStr[:len(sizeStr)-2]
+		} else {
+			numStr = sizeStr[:len(sizeStr)-1]
+		}
+	} else if strings.HasSuffix(sizeStr, "mb") || strings.HasSuffix(sizeStr, "m") {
+		multiplier = 1024 * 1024
+		if strings.HasSuffix(sizeStr, "mb") {
+			numStr = sizeStr[:len(sizeStr)-2]
+		} else {
+			numStr = sizeStr[:len(sizeStr)-1]
+		}
+	} else if strings.HasSuffix(sizeStr, "kb") || strings.HasSuffix(sizeStr, "k") {
+		multiplier = 1024
+		if strings.HasSuffix(sizeStr, "kb") {
+			numStr = sizeStr[:len(sizeStr)-2]
+		} else {
+			numStr = sizeStr[:len(sizeStr)-1]
+		}
+	} else {
+		return 0, fmt.Errorf("unsupported memory size format: %s", sizeStr)
+	}
+
+	val, err := strconv.ParseFloat(numStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid numeric value in memory size: %s", sizeStr)
+	}
+
+	return int64(val * float64(multiplier)), nil
 }
 
 // DeletePod delete a failing pod so kubernetes relaunch it again

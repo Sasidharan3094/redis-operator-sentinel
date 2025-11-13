@@ -8,8 +8,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	redisfailoverv1 "github.com/freshworks/redis-operator/api/redisfailover/v1"
@@ -527,6 +529,9 @@ func TestRedisStatefulSetStorageGeneration(t *testing.T) {
 		generatedStatefulSet := appsv1.StatefulSet{}
 
 		ms := &mK8SService.Services{}
+		// Mock GetStatefulSet to return "not found" (simulating new StatefulSet creation)
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -581,6 +586,7 @@ func TestRedisStatefulSetCommands(t *testing.T) {
 		gotCommands := []string{}
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -633,6 +639,7 @@ func TestSentinelDeploymentCommands(t *testing.T) {
 		gotCommands := []string{}
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -681,6 +688,7 @@ func TestRedisStatefulSetPodAnnotations(t *testing.T) {
 		gotPodAnnotations := map[string]string{}
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -729,6 +737,7 @@ func TestSentinelDeploymentPodAnnotations(t *testing.T) {
 		gotPodAnnotations := map[string]string{}
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -771,6 +780,7 @@ func TestRedisStatefulSetServiceAccountName(t *testing.T) {
 		gotServiceAccountName := ""
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -813,6 +823,7 @@ func TestSentinelDeploymentServiceAccountName(t *testing.T) {
 		gotServiceAccountName := ""
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -1806,6 +1817,7 @@ func TestRedisHostNetworkAndDnsPolicy(t *testing.T) {
 		var actualDnsPolicy corev1.DNSPolicy
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -1855,6 +1867,7 @@ func TestSentinelHostNetworkAndDnsPolicy(t *testing.T) {
 		var actualDnsPolicy corev1.DNSPolicy
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -1905,6 +1918,7 @@ func TestRedisImagePullPolicy(t *testing.T) {
 		rf.Spec.Redis.Exporter.ImagePullPolicy = test.expectedExporterPolicy
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -1951,6 +1965,7 @@ func TestSentinelImagePullPolicy(t *testing.T) {
 		rf.Spec.Sentinel.ImagePullPolicy = test.policy
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2026,6 +2041,7 @@ func TestRedisExtraVolumeMounts(t *testing.T) {
 		rf.Spec.Redis.ExtraVolumeMounts = test.expectedVolumeMounts
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2101,6 +2117,7 @@ func TestSentinelExtraVolumeMounts(t *testing.T) {
 		rf.Spec.Sentinel.ExtraVolumeMounts = test.expectedVolumeMounts
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2158,6 +2175,7 @@ func TestCustomPort(t *testing.T) {
 		rf.Spec.Redis.Port = test.port
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2240,6 +2258,7 @@ func TestRedisEnv(t *testing.T) {
 		}
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2291,6 +2310,7 @@ func TestRedisStartupProbe(t *testing.T) {
 		rf.Spec.Redis.StartupConfigMap = test.name
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2344,6 +2364,7 @@ func TestSentinelStartupProbe(t *testing.T) {
 		rf.Spec.Sentinel.StartupConfigMap = test.name
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2428,6 +2449,7 @@ func TestRedisCustomLivenessProbe(t *testing.T) {
 		rf.Spec.Redis.Port = 6379
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2507,6 +2529,7 @@ func TestSentinelCustomLivenessProbe(t *testing.T) {
 		rf.Spec.Sentinel.CustomLivenessProbe = test.customLivenessProbe
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2574,6 +2597,7 @@ func TestRedisCustomReadinessProbe(t *testing.T) {
 		rf.Spec.Redis.CustomReadinessProbe = test.customReadinessProbe
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2653,6 +2677,7 @@ func TestSentinelCustomReadinessProbe(t *testing.T) {
 		rf.Spec.Sentinel.CustomReadinessProbe = test.customReadinessProbe
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2712,6 +2737,7 @@ func TestRedisCustomStartupProbe(t *testing.T) {
 		rf.Spec.Redis.CustomStartupProbe = test.customStartupProbe
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2779,6 +2805,7 @@ func TestSentinelCustomStartupProbe(t *testing.T) {
 		rf.Spec.Sentinel.CustomStartupProbe = test.customStartupProbe
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2866,6 +2893,7 @@ func TestDisableMyMaster(t *testing.T) {
 		// redisShutdownSHSriptConfigMap := rfservice.generateRedisShutdownConfigMap(rf)
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)

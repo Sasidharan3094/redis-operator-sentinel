@@ -8,15 +8,17 @@ import (
 	"github.com/stretchr/testify/mock"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	redisfailoverv1 "github.com/spotahome/redis-operator/api/redisfailover/v1"
-	"github.com/spotahome/redis-operator/log"
-	"github.com/spotahome/redis-operator/metrics"
-	mK8SService "github.com/spotahome/redis-operator/mocks/service/k8s"
-	rfservice "github.com/spotahome/redis-operator/operator/redisfailover/service"
+	redisfailoverv1 "github.com/freshworks/redis-operator/api/redisfailover/v1"
+	"github.com/freshworks/redis-operator/log"
+	"github.com/freshworks/redis-operator/metrics"
+	mK8SService "github.com/freshworks/redis-operator/mocks/service/k8s"
+	rfservice "github.com/freshworks/redis-operator/operator/redisfailover/service"
 )
 
 func TestRedisStatefulSetStorageGeneration(t *testing.T) {
@@ -261,7 +263,7 @@ func TestRedisStatefulSetStorageGeneration(t *testing.T) {
 								AccessModes: []corev1.PersistentVolumeAccessMode{
 									"ReadWriteOnce",
 								},
-								Resources: corev1.ResourceRequirements{
+								Resources: corev1.VolumeResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceStorage: resource.MustParse("1Gi"),
 									},
@@ -280,7 +282,7 @@ func TestRedisStatefulSetStorageGeneration(t *testing.T) {
 						AccessModes: []corev1.PersistentVolumeAccessMode{
 							"ReadWriteOnce",
 						},
-						Resources: corev1.ResourceRequirements{
+						Resources: corev1.VolumeResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceStorage: resource.MustParse("1Gi"),
 							},
@@ -376,7 +378,7 @@ func TestRedisStatefulSetStorageGeneration(t *testing.T) {
 								AccessModes: []corev1.PersistentVolumeAccessMode{
 									"ReadWriteOnce",
 								},
-								Resources: corev1.ResourceRequirements{
+								Resources: corev1.VolumeResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceStorage: resource.MustParse("1Gi"),
 									},
@@ -395,7 +397,7 @@ func TestRedisStatefulSetStorageGeneration(t *testing.T) {
 						AccessModes: []corev1.PersistentVolumeAccessMode{
 							"ReadWriteOnce",
 						},
-						Resources: corev1.ResourceRequirements{
+						Resources: corev1.VolumeResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceStorage: resource.MustParse("1Gi"),
 							},
@@ -486,7 +488,7 @@ func TestRedisStatefulSetStorageGeneration(t *testing.T) {
 								AccessModes: []corev1.PersistentVolumeAccessMode{
 									"ReadWriteOnce",
 								},
-								Resources: corev1.ResourceRequirements{
+								Resources: corev1.VolumeResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceStorage: resource.MustParse("1Gi"),
 									},
@@ -506,7 +508,7 @@ func TestRedisStatefulSetStorageGeneration(t *testing.T) {
 						AccessModes: []corev1.PersistentVolumeAccessMode{
 							"ReadWriteOnce",
 						},
-						Resources: corev1.ResourceRequirements{
+						Resources: corev1.VolumeResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceStorage: resource.MustParse("1Gi"),
 							},
@@ -527,6 +529,9 @@ func TestRedisStatefulSetStorageGeneration(t *testing.T) {
 		generatedStatefulSet := appsv1.StatefulSet{}
 
 		ms := &mK8SService.Services{}
+		// Mock GetStatefulSet to return "not found" (simulating new StatefulSet creation)
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -581,6 +586,7 @@ func TestRedisStatefulSetCommands(t *testing.T) {
 		gotCommands := []string{}
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -633,6 +639,7 @@ func TestSentinelDeploymentCommands(t *testing.T) {
 		gotCommands := []string{}
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -681,6 +688,7 @@ func TestRedisStatefulSetPodAnnotations(t *testing.T) {
 		gotPodAnnotations := map[string]string{}
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -729,6 +737,7 @@ func TestSentinelDeploymentPodAnnotations(t *testing.T) {
 		gotPodAnnotations := map[string]string{}
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -771,6 +780,7 @@ func TestRedisStatefulSetServiceAccountName(t *testing.T) {
 		gotServiceAccountName := ""
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -813,6 +823,7 @@ func TestSentinelDeploymentServiceAccountName(t *testing.T) {
 		gotServiceAccountName := ""
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -1806,6 +1817,7 @@ func TestRedisHostNetworkAndDnsPolicy(t *testing.T) {
 		var actualDnsPolicy corev1.DNSPolicy
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -1855,6 +1867,7 @@ func TestSentinelHostNetworkAndDnsPolicy(t *testing.T) {
 		var actualDnsPolicy corev1.DNSPolicy
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -1905,6 +1918,7 @@ func TestRedisImagePullPolicy(t *testing.T) {
 		rf.Spec.Redis.Exporter.ImagePullPolicy = test.expectedExporterPolicy
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			ss := args.Get(1).(*appsv1.StatefulSet)
@@ -1951,6 +1965,7 @@ func TestSentinelImagePullPolicy(t *testing.T) {
 		rf.Spec.Sentinel.ImagePullPolicy = test.policy
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2026,6 +2041,7 @@ func TestRedisExtraVolumeMounts(t *testing.T) {
 		rf.Spec.Redis.ExtraVolumeMounts = test.expectedVolumeMounts
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2101,6 +2117,7 @@ func TestSentinelExtraVolumeMounts(t *testing.T) {
 		rf.Spec.Sentinel.ExtraVolumeMounts = test.expectedVolumeMounts
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2158,6 +2175,7 @@ func TestCustomPort(t *testing.T) {
 		rf.Spec.Redis.Port = test.port
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2240,6 +2258,7 @@ func TestRedisEnv(t *testing.T) {
 		}
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2291,6 +2310,7 @@ func TestRedisStartupProbe(t *testing.T) {
 		rf.Spec.Redis.StartupConfigMap = test.name
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2344,6 +2364,7 @@ func TestSentinelStartupProbe(t *testing.T) {
 		rf.Spec.Sentinel.StartupConfigMap = test.name
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2428,6 +2449,7 @@ func TestRedisCustomLivenessProbe(t *testing.T) {
 		rf.Spec.Redis.Port = 6379
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2507,6 +2529,7 @@ func TestSentinelCustomLivenessProbe(t *testing.T) {
 		rf.Spec.Sentinel.CustomLivenessProbe = test.customLivenessProbe
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2574,6 +2597,7 @@ func TestRedisCustomReadinessProbe(t *testing.T) {
 		rf.Spec.Redis.CustomReadinessProbe = test.customReadinessProbe
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2653,6 +2677,7 @@ func TestSentinelCustomReadinessProbe(t *testing.T) {
 		rf.Spec.Sentinel.CustomReadinessProbe = test.customReadinessProbe
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2712,6 +2737,7 @@ func TestRedisCustomStartupProbe(t *testing.T) {
 		rf.Spec.Redis.CustomStartupProbe = test.customStartupProbe
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			s := args.Get(1).(*appsv1.StatefulSet)
@@ -2779,6 +2805,7 @@ func TestSentinelCustomStartupProbe(t *testing.T) {
 		rf.Spec.Sentinel.CustomStartupProbe = test.customStartupProbe
 
 		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
 		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
 		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
 			d := args.Get(1).(*appsv1.Deployment)
@@ -2790,5 +2817,112 @@ func TestSentinelCustomStartupProbe(t *testing.T) {
 
 		assert.NoError(err)
 		assert.Equal(test.expectedStartupProbe, startupProbe)
+	}
+}
+
+func TestDisableMyMaster(t *testing.T) {
+	tests := []struct {
+		name                                   string
+		disableMyMaster                        bool
+		expectedSentinelReadinessProbe         *corev1.Probe
+		redisShutdownSHScriptConfigMap         *corev1.ConfigMap
+		sentinelConfConfigMap                  *corev1.ConfigMap
+		expectedSentinelConfConfigMap          *corev1.ConfigMap
+		expectedRedisShutdownSHScriptConfigMap *corev1.ConfigMap
+	}{
+		{
+			name:            "disable_mymaster_false",
+			disableMyMaster: false,
+			expectedSentinelReadinessProbe: &corev1.Probe{
+				InitialDelaySeconds: 30,
+				TimeoutSeconds:      5,
+				ProbeHandler: corev1.ProbeHandler{
+					Exec: &corev1.ExecAction{
+						Command: []string{
+							"sh",
+							"-c",
+							"redis-cli -h $(hostname) -p 26379 sentinel get-master-addr-by-name mymaster | head -n 1 | grep -vq '127.0.0.1'",
+						},
+					},
+				},
+			},
+			expectedSentinelConfConfigMap: &corev1.ConfigMap{
+				Data: map[string]string{
+					"sentinel.conf": "sentinel monitor mymaster 127.0.0.1 0 2\nsentinel down-after-milliseconds mymaster 1000\nsentinel failover-timeout mymaster 3000\nsentinel parallel-syncs mymaster 2",
+				},
+			},
+			expectedRedisShutdownSHScriptConfigMap: &corev1.ConfigMap{
+				Data: map[string]string{
+					"shutdown.sh": "master=$(redis-cli -h ${RFS_TEST_SERVICE_HOST} -p ${RFS_TEST_SERVICE_PORT_SENTINEL} --csv SENTINEL get-master-addr-by-name mymaster | tr ',' ' ' | tr -d '\\\"' |cut -d' ' -f1)\nif [ \"$master\" = \"$(hostname -i)\" ]; then\nredis-cli -h ${RFS_TEST_SERVICE_HOST} -p ${RFS_TEST_SERVICE_PORT_SENTINEL} SENTINEL failover mymaster\nsleep 31\nfi\ncmd=\"redis-cli -p 0\"\nif [ ! -z \"${REDIS_PASSWORD}\" ]; then\n\texport REDISCLI_AUTH=${REDIS_PASSWORD}\nfi\nsave_command=\"${cmd} save\"\neval $save_command",
+				},
+			},
+		},
+		{
+			name:            "disable_mymaster_true",
+			disableMyMaster: true,
+			expectedSentinelReadinessProbe: &corev1.Probe{
+				InitialDelaySeconds: 30,
+				TimeoutSeconds:      5,
+				ProbeHandler: corev1.ProbeHandler{
+					Exec: &corev1.ExecAction{
+						Command: []string{
+							"sh",
+							"-c",
+							"redis-cli -h $(hostname) -p 26379 sentinel get-master-addr-by-name test | head -n 1 | grep -vq '127.0.0.1'",
+						},
+					},
+				},
+			},
+			expectedSentinelConfConfigMap: &corev1.ConfigMap{
+				Data: map[string]string{
+					"sentinel.conf": "sentinel monitor test 127.0.0.1 0 2\nsentinel down-after-milliseconds test 1000\nsentinel failover-timeout test 3000\nsentinel parallel-syncs test 2",
+				},
+			},
+			expectedRedisShutdownSHScriptConfigMap: &corev1.ConfigMap{
+				Data: map[string]string{
+					"shutdown.sh": "master=$(redis-cli -h ${RFS_TEST_SERVICE_HOST} -p ${RFS_TEST_SERVICE_PORT_SENTINEL} --csv SENTINEL get-master-addr-by-name test | tr ',' ' ' | tr -d '\\\"' |cut -d' ' -f1)\nif [ \"$master\" = \"$(hostname -i)\" ]; then\nredis-cli -h ${RFS_TEST_SERVICE_HOST} -p ${RFS_TEST_SERVICE_PORT_SENTINEL} SENTINEL failover test\nsleep 31\nfi\ncmd=\"redis-cli -p 0\"\nif [ ! -z \"${REDIS_PASSWORD}\" ]; then\n\texport REDISCLI_AUTH=${REDIS_PASSWORD}\nfi\nsave_command=\"${cmd} save\"\neval $save_command",
+				},
+			},
+		},
+	}
+	for _, test := range tests {
+		assert := assert.New(t)
+
+		var sentinelReadinessProbe *corev1.Probe
+		rf := generateRF(test.disableMyMaster)
+		// redisShutdownSHSriptConfigMap := rfservice.generateRedisShutdownConfigMap(rf)
+
+		ms := &mK8SService.Services{}
+		ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
+		ms.On("CreateOrUpdatePodDisruptionBudget", namespace, mock.Anything).Once().Return(nil, nil)
+		ms.On("CreateOrUpdateDeployment", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
+			d := args.Get(1).(*appsv1.Deployment)
+			sentinelReadinessProbe = d.Spec.Template.Spec.Containers[0].ReadinessProbe
+		}).Return(nil)
+
+		client := rfservice.NewRedisFailoverKubeClient(ms, log.Dummy, metrics.Dummy)
+		err := client.EnsureSentinelDeployment(rf, nil, []metav1.OwnerReference{})
+		assert.NoError(err)
+		assert.Equal(test.expectedSentinelReadinessProbe, sentinelReadinessProbe)
+
+		generatedSentinelConfigMap := corev1.ConfigMap{}
+		ms.On("CreateOrUpdateConfigMap", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
+			cms := args.Get(1).(*corev1.ConfigMap)
+			generatedSentinelConfigMap = *cms
+		}).Return(nil)
+
+		err = client.EnsureSentinelConfigMap(rf, nil, []metav1.OwnerReference{})
+		assert.NoError(err)
+		assert.Equal(test.expectedSentinelConfConfigMap.Data, generatedSentinelConfigMap.Data)
+
+		generatedRedisConfigMap := corev1.ConfigMap{}
+		ms.On("CreateOrUpdateConfigMap", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
+			cmr := args.Get(1).(*corev1.ConfigMap)
+			generatedRedisConfigMap = *cmr
+		}).Return(nil)
+
+		err = client.EnsureRedisShutdownConfigMap(rf, nil, []metav1.OwnerReference{})
+		assert.NoError(err)
+		assert.Equal(test.expectedRedisShutdownSHScriptConfigMap.Data, generatedRedisConfigMap.Data)
 	}
 }

@@ -38,7 +38,7 @@ func TestValidate(t *testing.T) {
 			expectedError:   "BootstrapNode must include a host when provided",
 		},
 		{
-			name:   "SentinelCustomConfig provided",
+			name:   "SentinelCustomConfig not provided",
 			rfName: "test",
 		},
 		{
@@ -102,9 +102,10 @@ func TestValidate(t *testing.T) {
 					},
 					Spec: RedisFailoverSpec{
 						Redis: RedisSettings{
-							Image:    defaultImage,
-							Replicas: defaultRedisNumber,
-							Port:     defaultRedisPort,
+							Image:                    defaultImage,
+							Replicas:                 defaultRedisNumber,
+							Port:                     defaultRedisPort,
+							ReservedPodMemoryPercent: defaultReservedPodMemoryPercent,
 							Exporter: Exporter{
 								Image: defaultExporterImage,
 							},

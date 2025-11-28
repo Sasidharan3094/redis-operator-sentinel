@@ -9,12 +9,12 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
-	redisfailoverv1 "github.com/spotahome/redis-operator/api/redisfailover/v1"
-	"github.com/spotahome/redis-operator/log"
-	"github.com/spotahome/redis-operator/metrics"
-	"github.com/spotahome/redis-operator/operator/redisfailover/util"
-	"github.com/spotahome/redis-operator/service/k8s"
-	"github.com/spotahome/redis-operator/service/redis"
+	redisfailoverv1 "github.com/freshworks/redis-operator/api/redisfailover/v1"
+	"github.com/freshworks/redis-operator/log"
+	"github.com/freshworks/redis-operator/metrics"
+	"github.com/freshworks/redis-operator/operator/redisfailover/util"
+	"github.com/freshworks/redis-operator/service/k8s"
+	"github.com/freshworks/redis-operator/service/redis"
 )
 
 // RedisFailoverCheck defines the interface able to check the correct status of a redis failover
@@ -26,7 +26,7 @@ type RedisFailoverCheck interface {
 	CheckSentinelSlavesNumberInMemory(sentinel string, rFailover *redisfailoverv1.RedisFailover) error
 	CheckSentinelQuorum(rFailover *redisfailoverv1.RedisFailover) (int, error)
 	CheckIfMasterLocalhost(rFailover *redisfailoverv1.RedisFailover) (bool, error)
-	CheckSentinelMonitor(sentinel string, monitor ...string) error
+	CheckSentinelMonitor(sentinel, masterName string, monitor ...string) error
 	GetMasterIP(rFailover *redisfailoverv1.RedisFailover) (string, error)
 	GetNumberMasters(rFailover *redisfailoverv1.RedisFailover) (int, error)
 	GetRedisesIPs(rFailover *redisfailoverv1.RedisFailover) ([]string, error)
@@ -85,21 +85,61 @@ func (r *RedisFailoverChecker) CheckSentinelNumber(rf *redisfailoverv1.RedisFail
 }
 
 func (r *RedisFailoverChecker) setMasterLabelIfNecessary(namespace string, pod corev1.Pod) error {
-	for labelKey, labelValue := range pod.ObjectMeta.Labels {
+	for labelKey, labelValue := range pod.Labels {
 		if labelKey == redisRoleLabelKey && labelValue == redisRoleLabelMaster {
 			return nil
 		}
 	}
-	return r.k8sService.UpdatePodLabels(namespace, pod.ObjectMeta.Name, generateRedisMasterRoleLabel())
+	return r.k8sService.UpdatePodLabels(namespace, pod.Name, generateRedisMasterRoleLabel())
 }
 
 func (r *RedisFailoverChecker) setSlaveLabelIfNecessary(namespace string, pod corev1.Pod) error {
-	for labelKey, labelValue := range pod.ObjectMeta.Labels {
+	for labelKey, labelValue := range pod.Labels {
 		if labelKey == redisRoleLabelKey && labelValue == redisRoleLabelSlave {
 			return nil
 		}
 	}
-	return r.k8sService.UpdatePodLabels(namespace, pod.ObjectMeta.Name, generateRedisSlaveRoleLabel())
+	return r.k8sService.UpdatePodLabels(namespace, pod.Name, generateRedisSlaveRoleLabel())
+}
+
+func (r *RedisFailoverChecker) setMasterAnnotationIfNecessary(namespace string, pod corev1.Pod, rf *redisfailoverv1.RedisFailover) error {
+	currentValue, exists := pod.ObjectMeta.Annotations[clusterAutoscalerSafeToEvictAnnotationKey]
+
+	if !rf.Spec.Redis.PreventMasterEviction {
+		// Remove annotation when preventMasterEviction is disabled
+		if exists {
+			return r.k8sService.RemovePodAnnotation(namespace, pod.ObjectMeta.Name, clusterAutoscalerSafeToEvictAnnotationKey)
+		}
+		return nil
+	}
+
+	// Add annotation when preventMasterEviction is enabled
+	expectedValue := clusterAutoscalerSafeToEvictAnnotationMaster
+	if !exists || currentValue != expectedValue {
+		return r.k8sService.UpdatePodAnnotations(namespace, pod.ObjectMeta.Name, generateRedisMasterAnnotations())
+	}
+
+	return nil
+}
+
+func (r *RedisFailoverChecker) setSlaveAnnotationIfNecessary(namespace string, pod corev1.Pod, rf *redisfailoverv1.RedisFailover) error {
+	currentValue, exists := pod.ObjectMeta.Annotations[clusterAutoscalerSafeToEvictAnnotationKey]
+
+	if !rf.Spec.Redis.PreventMasterEviction {
+		// Remove annotation when preventMasterEviction is disabled
+		if exists {
+			return r.k8sService.RemovePodAnnotation(namespace, pod.ObjectMeta.Name, clusterAutoscalerSafeToEvictAnnotationKey)
+		}
+		return nil
+	}
+
+	// Add annotation when preventMasterEviction is enabled
+	expectedValue := clusterAutoscalerSafeToEvictAnnotationSlave
+	if !exists || currentValue != expectedValue {
+		return r.k8sService.UpdatePodAnnotations(namespace, pod.ObjectMeta.Name, generateRedisSlaveAnnotations())
+	}
+
+	return nil
 }
 
 // CheckAllSlavesFromMaster controlls that all slaves have the same master (the real one)
@@ -121,8 +161,16 @@ func (r *RedisFailoverChecker) CheckAllSlavesFromMaster(master string, rf *redis
 			if err != nil {
 				return err
 			}
+			err = r.setMasterAnnotationIfNecessary(rf.Namespace, rp, rf)
+			if err != nil {
+				return err
+			}
 		} else {
 			err = r.setSlaveLabelIfNecessary(rf.Namespace, rp)
+			if err != nil {
+				return err
+			}
+			err = r.setSlaveAnnotationIfNecessary(rf.Namespace, rp, rf)
 			if err != nil {
 				return err
 			}
@@ -158,7 +206,7 @@ func (r *RedisFailoverChecker) CheckSentinelNumberInMemory(sentinel string, rf *
 // false and error if any function fails
 func (r *RedisFailoverChecker) CheckIfMasterLocalhost(rFailover *redisfailoverv1.RedisFailover) (bool, error) {
 
-	var lhmaster int = 0
+	var lhmaster = 0
 	redisIps, err := r.GetRedisesIPs(rFailover)
 	if len(redisIps) == 0 || err != nil {
 		r.logger.Warningf("CheckIfMasterLocalhost GetRedisesIPs Failed- unable to fetch any redis Ips Currently")
@@ -196,7 +244,7 @@ func (r *RedisFailoverChecker) CheckIfMasterLocalhost(rFailover *redisfailoverv1
 // to heal the redis system
 func (r *RedisFailoverChecker) CheckSentinelQuorum(rFailover *redisfailoverv1.RedisFailover) (int, error) {
 
-	var unhealthyCnt int = -1
+	var unhealthyCnt = -1
 
 	sentinels, err := r.GetSentinelsIPs(rFailover)
 	if err != nil {
@@ -211,7 +259,7 @@ func (r *RedisFailoverChecker) CheckSentinelQuorum(rFailover *redisfailoverv1.Re
 
 	unhealthyCnt = 0
 	for _, sip := range sentinels {
-		err = r.redisClient.SentinelCheckQuorum(sip)
+		err = r.redisClient.SentinelCheckQuorum(sip, rFailover.MasterName())
 		if err != nil {
 			unhealthyCnt += 1
 		} else {
@@ -247,13 +295,13 @@ func (r *RedisFailoverChecker) CheckSentinelSlavesNumberInMemory(sentinel string
 }
 
 // CheckSentinelMonitor controls if the sentinels are monitoring the expected master
-func (r *RedisFailoverChecker) CheckSentinelMonitor(sentinel string, monitor ...string) error {
+func (r *RedisFailoverChecker) CheckSentinelMonitor(sentinel, masterName string, monitor ...string) error {
 	monitorIP := monitor[0]
 	monitorPort := ""
 	if len(monitor) > 1 {
 		monitorPort = monitor[1]
 	}
-	actualMonitorIP, actualMonitorPort, err := r.redisClient.GetSentinelMonitor(sentinel)
+	actualMonitorIP, actualMonitorPort, err := r.redisClient.GetSentinelMonitor(sentinel, masterName)
 	if err != nil {
 		return err
 	}

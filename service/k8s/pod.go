@@ -11,8 +11,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/spotahome/redis-operator/log"
-	"github.com/spotahome/redis-operator/metrics"
+	"github.com/freshworks/redis-operator/log"
+	"github.com/freshworks/redis-operator/metrics"
 )
 
 // Pod the ServiceAccount service that knows how to interact with k8s to manage them
@@ -23,7 +23,10 @@ type Pod interface {
 	CreateOrUpdatePod(namespace string, pod *corev1.Pod) error
 	DeletePod(namespace string, name string) error
 	ListPods(namespace string) (*corev1.PodList, error)
+	ListPodsWithFieldSelector(namespace string, fieldSelector string) (*corev1.PodList, error)
 	UpdatePodLabels(namespace, podName string, labels map[string]string) error
+	UpdatePodAnnotations(namespace, podName string, annotations map[string]string) error
+	RemovePodAnnotation(namespace, podName string, annotationKey string) error
 }
 
 // PodService is the pod service implementation using API calls to kubernetes.
@@ -100,6 +103,14 @@ func (p *PodService) ListPods(namespace string) (*corev1.PodList, error) {
 	return pods, err
 }
 
+func (p *PodService) ListPodsWithFieldSelector(namespace string, fieldSelector string) (*corev1.PodList, error) {
+	pods, err := p.kubeClient.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
+		FieldSelector: fieldSelector,
+	})
+	recordMetrics(namespace, "Pod", metrics.NOT_APPLICABLE, "LIST", err, p.metricsRecorder)
+	return pods, err
+}
+
 // PatchStringValue specifies a patch operation for a string.
 type PatchStringValue struct {
 	Op    string      `json:"op"`
@@ -122,9 +133,57 @@ func (p *PodService) UpdatePodLabels(namespace, podName string, labels map[strin
 	payloadBytes, _ := json.Marshal(payloads)
 
 	_, err := p.kubeClient.CoreV1().Pods(namespace).Patch(context.TODO(), podName, types.JSONPatchType, payloadBytes, metav1.PatchOptions{})
+
 	recordMetrics(namespace, "Pod", podName, "PATCH", err, p.metricsRecorder)
 	if err != nil {
 		p.logger.Errorf("Update pod labels failed, namespace: %s, pod name: %s, error: %v", namespace, podName, err)
 	}
 	return err
+}
+
+// modifyPodAnnotations is a helper function that gets a pod, modifies its annotations using the provided function, and updates it
+func (p *PodService) modifyPodAnnotations(namespace, podName, operation string, modifyFunc func(map[string]string)) error {
+	// Get the current pod
+	pod, err := p.kubeClient.CoreV1().Pods(namespace).Get(context.TODO(), podName, metav1.GetOptions{})
+	if err != nil {
+		p.logger.Errorf("Failed to get pod %s in namespace %s: %v", podName, namespace, err)
+		recordMetrics(namespace, "Pod", podName, "GET", err, p.metricsRecorder)
+		return err
+	}
+
+	// Initialize annotations map if it doesn't exist
+	if pod.Annotations == nil {
+		pod.Annotations = make(map[string]string)
+	}
+
+	// Apply the modification function
+	modifyFunc(pod.Annotations)
+
+	// Update the pod
+	_, err = p.kubeClient.CoreV1().Pods(namespace).Update(context.TODO(), pod, metav1.UpdateOptions{})
+	recordMetrics(namespace, "Pod", podName, "UPDATE", err, p.metricsRecorder)
+	if err != nil {
+		p.logger.Errorf("%s pod annotations failed, namespace: %s, pod name: %s, error: %v", operation, namespace, podName, err)
+	}
+	return err
+}
+
+func (p *PodService) UpdatePodAnnotations(namespace, podName string, annotations map[string]string) error {
+	p.logger.Infof("Update pod annotation, namespace: %s, pod name: %s, annotations: %v", namespace, podName, annotations)
+
+	return p.modifyPodAnnotations(namespace, podName, "Update", func(podAnnotations map[string]string) {
+		// Add/update the annotations
+		for annotationKey, annotationValue := range annotations {
+			podAnnotations[annotationKey] = annotationValue
+		}
+	})
+}
+
+func (p *PodService) RemovePodAnnotation(namespace, podName string, annotationKey string) error {
+	p.logger.Infof("Remove pod annotation, namespace: %s, pod name: %s, annotation key: %s", namespace, podName, annotationKey)
+
+	return p.modifyPodAnnotations(namespace, podName, "Remove", func(podAnnotations map[string]string) {
+		// Remove the annotation if it exists
+		delete(podAnnotations, annotationKey)
+	})
 }

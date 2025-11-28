@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	redisfailoverv1 "github.com/spotahome/redis-operator/api/redisfailover/v1"
-	"github.com/spotahome/redis-operator/metrics"
+	redisfailoverv1 "github.com/freshworks/redis-operator/api/redisfailover/v1"
+	"github.com/freshworks/redis-operator/metrics"
 )
 
 // UpdateRedisesPods if the running version of pods are equal to the statefulset one
@@ -218,7 +218,7 @@ func (r *RedisFailoverHandler) CheckAndHeal(rf *redisfailoverv1.RedisFailover) e
 
 	port := getRedisPort(rf.Spec.Redis.Port)
 	for _, sip := range sentinels {
-		err = r.rfChecker.CheckSentinelMonitor(sip, master, port)
+		err = r.rfChecker.CheckSentinelMonitor(sip, rf.MasterName(), master, port)
 		setRedisCheckerMetrics(r.mClient, "sentinel", rf.Namespace, rf.Name, metrics.SENTINEL_WRONG_MASTER, sip, err)
 		if err != nil {
 			r.logger.WithField("redisfailover", rf.ObjectMeta.Name).WithField("namespace", rf.ObjectMeta.Namespace).Warningf("Fixing sentinel not monitoring expected master: %s", err.Error())
@@ -267,7 +267,7 @@ func (r *RedisFailoverHandler) checkAndHealBootstrapMode(rf *redisfailoverv1.Red
 			return err
 		}
 		for _, sip := range sentinels {
-			err = r.rfChecker.CheckSentinelMonitor(sip, bootstrapSettings.Host, bootstrapSettings.Port)
+			err = r.rfChecker.CheckSentinelMonitor(sip, rf.MasterName(), bootstrapSettings.Host, bootstrapSettings.Port)
 			setRedisCheckerMetrics(r.mClient, "sentinel", rf.Namespace, rf.Name, metrics.SENTINEL_WRONG_MASTER, sip, err)
 			if err != nil {
 				r.logger.WithField("redisfailover", rf.ObjectMeta.Name).WithField("namespace", rf.ObjectMeta.Namespace).Warningf("Fixing sentinel not monitoring expected master: %s", err.Error())
@@ -331,14 +331,14 @@ func getRedisPort(p int32) string {
 }
 
 func setRedisCheckerMetrics(metricsClient metrics.Recorder, mode /* redis or sentinel? */ string, rfNamespace string, rfName string, property string, IP string, err error) {
-	if mode == "sentinel" {
+	switch mode {
+	case "sentinel":
 		if err != nil {
 			metricsClient.RecordSentinelCheck(rfNamespace, rfName, property, IP, metrics.STATUS_UNHEALTHY)
 		} else {
 			metricsClient.RecordSentinelCheck(rfNamespace, rfName, property, IP, metrics.STATUS_HEALTHY)
 		}
-
-	} else if mode == "redis" {
+	default: // redis
 		if err != nil {
 			metricsClient.RecordRedisCheck(rfNamespace, rfName, property, IP, metrics.STATUS_UNHEALTHY)
 		} else {

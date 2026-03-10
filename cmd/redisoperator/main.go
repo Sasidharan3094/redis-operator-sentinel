@@ -87,8 +87,21 @@ func (m *Main) Run() error {
 	// Get lease lock resource namespace
 	lockNamespace := getNamespace()
 
+	// Group ID is required for label-based grouping.
+	operatorGroupID := os.Getenv("OPERATOR_GROUP_ID")
+	if operatorGroupID == "" {
+		log.Fatalf("operator_group_id environment variable is required and must be non-empty")
+	}
+	log.Infof("starting rf operator")
+	log.Infof("operator group id: %s", operatorGroupID)
+	log.Infof("using label selector: redis-failover.freshworks.com/operator-group=%s", operatorGroupID)
+
+	rfConfig := m.flags.ToRedisOperatorConfig()
+	rfConfig.OperatorGroupID = operatorGroupID
+	metricsRecorder.SetOperatorInfo(operatorGroupID, m.flags.SupportedNamespacesRegex)
+
 	// Create operator and run.
-	redisfailoverOperator, err := redisfailover.New(m.flags.ToRedisOperatorConfig(), k8sservice, k8sClient, lockNamespace, redisClient, metricsRecorder, m.logger)
+	redisfailoverOperator, err := redisfailover.New(rfConfig, k8sservice, k8sClient, lockNamespace, redisClient, metricsRecorder, m.logger)
 	if err != nil {
 		return err
 	}

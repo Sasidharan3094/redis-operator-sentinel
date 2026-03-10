@@ -9,6 +9,7 @@ import (
 	"github.com/spotahome/kooper/v2/controller/leaderelection"
 	kooperlog "github.com/spotahome/kooper/v2/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
@@ -23,9 +24,10 @@ import (
 )
 
 const (
-	resync       = 30 * time.Second
-	operatorName = "redis-operator"
-	lockKey      = "redis-failover-lease"
+	resync             = 30 * time.Second
+	operatorName       = "redis-operator"
+	lockKeyPrefix      = "redis-failover-lease"
+	rfOperatorGroupKey = "redis-failover.freshworks.com/operator-group"
 )
 
 // New will create an operator that is responsible of managing all the required stuff
@@ -41,7 +43,8 @@ func New(cfg Config, k8sService k8s.Services, k8sClient kubernetes.Interface, lo
 	rfRetriever := NewRedisFailoverRetriever(cfg, k8sService)
 
 	kooperLogger := kooperlogger{Logger: logger.WithField("operator", "redisfailover")}
-	// Leader election service.
+	// Leader election service: one lease per operator group so each deployment can be leader for its group.
+	lockKey := lockKeyPrefix + "-" + cfg.OperatorGroupID
 	leSVC, err := leaderelection.NewDefault(lockKey, lockNamespace, k8sClient, kooperLogger)
 	if err != nil {
 		return nil, err
@@ -65,10 +68,15 @@ func NewRedisFailoverRetriever(cfg Config, cli k8s.Services) controller.Retrieve
 		match, _ := regexp.Match(cfg.SupportedNamespacesRegex, []byte(rf.Namespace))
 		return match
 	}
-	// check in the startup whether the regex compiles
+
+	// Server-side label selector so only RF CRs for this group are listed/watched.
+	groupSelector := labels.SelectorFromSet(map[string]string{
+		rfOperatorGroupKey: cfg.OperatorGroupID,
+	}).String()
 
 	return controller.MustRetrieverFromListerWatcher(&cache.ListWatch{
 		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+			options.LabelSelector = groupSelector
 			rfList, err := cli.ListRedisFailovers(context.Background(), "", options)
 			if err != nil {
 				return rfList, err
@@ -85,6 +93,7 @@ func NewRedisFailoverRetriever(cfg Config, cli k8s.Services) controller.Retrieve
 			return rfList, err
 		},
 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			options.LabelSelector = groupSelector
 			watcher, err := cli.WatchRedisFailovers(context.Background(), "", options)
 			watcher = watch.Filter(watcher, func(event watch.Event) (watch.Event, bool) {
 				rf, ok := event.Object.(*redisfailoverv1.RedisFailover)

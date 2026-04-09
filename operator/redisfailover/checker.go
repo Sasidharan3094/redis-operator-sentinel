@@ -9,7 +9,8 @@ import (
 	"github.com/freshworks/redis-operator/metrics"
 )
 
-// UpdateRedisesPods if the running version of pods are equal to the statefulset one
+// UpdateRedisesPods deletes Redis pods with a stale StatefulSet revision (OnDelete rollout).
+// DisableMasterRollout when true, only slave pods are rolled out on spec change (OnDelete); master is not deleted until the flag is removed.
 func (r *RedisFailoverHandler) UpdateRedisesPods(rf *redisfailoverv1.RedisFailover) error {
 	redises, err := r.rfChecker.GetRedisesIPs(rf)
 	if err != nil {
@@ -59,8 +60,7 @@ func (r *RedisFailoverHandler) UpdateRedisesPods(rf *redisfailoverv1.RedisFailov
 		}
 	}
 
-	if !rf.Bootstrapping() {
-		// Update stale pod with role master
+	if !rf.Bootstrapping() && !rf.Spec.Redis.DisableMasterRollout {
 		master, err := r.rfChecker.GetRedisesMasterPod(rf)
 		if err != nil {
 			return err

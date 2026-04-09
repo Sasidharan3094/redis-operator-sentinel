@@ -73,6 +73,7 @@ type RedisSettings struct {
 	CustomStartupProbe            *corev1.Probe                     `json:"customStartupProbe,omitempty"`
 	DisablePodDisruptionBudget    bool                              `json:"disablePodDisruptionBudget,omitempty"`
 	PreventMasterEviction         bool                              `json:"preventMasterEviction,omitempty"`
+	DisableMasterRollout          bool                              `json:"disableMasterRollout,omitempty"`
 }
 
 // SentinelSettings defines the specification of the sentinel cluster

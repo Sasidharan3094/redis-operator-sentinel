@@ -5574,6 +5574,10 @@ spec:
                     type: integer
                   priorityClassName:
                     type: string
+                  disableMasterRollout:
+                    default: false
+                    description: When true, only slave pods are rolled out on spec change (OnDelete); master is not deleted until this is false.
+                    type: boolean
                   replicas:
                     format: int32
                     type: integer

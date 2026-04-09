@@ -192,6 +192,22 @@ Add the `redis-failover.freshworks.com/skip-reconcile: "true"` annotation to you
 
 The operator will still log that it's skipping reconciliation for the resource, so you can verify the feature is working as expected.
 
+### Disable Master Rollout
+
+The Redis StatefulSet uses an **OnDelete** update strategy: pods are only restarted when the operator deletes them so they get the new spec. By default, the operator deletes both slave and master pods when their revision is stale.
+
+When `disableMasterRollout` is set to `true` under `spec.redis`, the operator will **only** delete slave pods for rollout. The current master pod is never deleted for rollout until the flag is removed. All other reconciliation (labels, healing, sentinel config, etc.) runs as usual.
+
+This is useful for **planned failovers** or upgrades where you want to rollout slaves first and control when the master is restarted (e.g. after slaves have synced).
+
+#### Usage
+
+Set `spec.redis.disableMasterRollout: true` in your RedisFailover. When you change the Redis spec (e.g. image), only slave pods will be deleted and recreated. When you are ready to rollout the master, set `disableMasterRollout: false` (or remove it); on the next reconcile the operator will delete the master pod and it will be recreated with the new spec (a brief failover will occur).
+
+See the [disable master rollout example](example/redisfailover/disable-master-rollout.yaml).
+
+**Note**: While the flag is set, the master runs the old spec (image/config); remove the flag when you want the master to get the new spec.
+
 ### Custom shutdown script
 
 By default, a custom shutdown file is given. This file makes redis to `SAVE` it's data, and in the case that redis is master, it'll call sentinel to ask for a failover.

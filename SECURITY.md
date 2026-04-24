@@ -63,9 +63,10 @@ reporter and maintainers agree on a different timeline for a specific case.
 
 ## Automated checks (supply chain)
 
-Pull requests may run **dependency review** when the repository has dependency
-data enabled. That complements manual review and does not replace reporting
-suspected vulnerabilities through the private channels above.
+Maintainers may enable GitHub **Dependency graph** and related features for this
+repository; those are optional org/repo settings and are not required for the
+workflows in this tree. They never replace reporting suspected vulnerabilities
+through the private channels above.
 
 ## Security-related configuration
 

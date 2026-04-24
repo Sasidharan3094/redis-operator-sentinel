@@ -72,7 +72,7 @@ manifests/               # CRD YAML, kustomize bases
 charts/redisoperator/    # Helm chart
 example/                 # sample manifests
 test/integration/        # integration tests (build tag: integration)
-.github/workflows/      # CI, DCO, dependency-review, stale, release
+.github/workflows/      # CI, DCO, staleissues, release
 ```
 
 ## GitHub Actions (beyond `ci.yaml`)
@@ -81,11 +81,10 @@ test/integration/        # integration tests (build tag: integration)
 |----------|---------|
 | [`ci.yaml`](.github/workflows/ci.yaml) | Lint, unit tests, integration matrix, Helm test, CRD/chart version check |
 | [`dco.yaml`](.github/workflows/dco.yaml) | DCO `Signed-off-by` on PR commits |
-| [`dependency-review.yaml`](.github/workflows/dependency-review.yaml) | Dependency review on PRs (needs dependency graph) |
-| [`stale.yml`](.github/workflows/stale.yml) | Mark/close inactive issues and PRs |
+| [`staleissues.yaml`](.github/workflows/staleissues.yaml) | Mark/close inactive issues (scheduled) |
 | [`release.yml`](.github/workflows/release.yml), [`draft_release.yml`](.github/workflows/draft_release.yml), [`helm.yml`](.github/workflows/helm.yml) | Releases and charts |
 
-**Repo settings:** enable [private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability) for `SECURITY.md`; enable **Dependency graph** if `dependency-review` should pass.
+**Repo settings:** enable [private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability) to match `SECURITY.md`. Optionally enable **Dependency graph** and add [dependency review](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-dependency-review) as a workflow if the org supports it.
 
 ## Quality gates (agent checklist)
 

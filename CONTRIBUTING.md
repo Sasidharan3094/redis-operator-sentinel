@@ -29,9 +29,7 @@ changes, CRD and API updates, and CI improvements.
 
 The [CI workflow](.github/workflows/ci.yaml) runs lint, unit tests, integration
 tests (Minikube matrix), Helm tests, and (on pull requests) a CRD/chart version
-check when the CRD file changes. Additional workflows run
-[`dependency-review`](.github/workflows/dependency-review.yaml) on pull requests
-(requires dependency graph in repo settings) and
+check when the CRD file changes. Pull requests also run
 [`dco.yaml`](.github/workflows/dco.yaml) for commit sign-off (see below). Before
 opening a PR, run the same checks you can locally:
 

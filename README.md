@@ -5,6 +5,15 @@
 
 Redis Operator creates/configures/manages redis-failovers atop Kubernetes.
 
+This project is licensed under the [Apache License 2.0](LICENSE).
+
+## Community
+
+- [Contributing](CONTRIBUTING.md) — how to build, test, and open pull requests.
+- [Security policy](SECURITY.md) — supported versions and how to report vulnerabilities.
+- [Maintainers](MAINTAINERS.md) — maintainer roles and how to become one.
+- [AGENTS.md](AGENTS.md) — repository layout, CI, and pointers for tooling and AI assistants.
+
 ## Requirements
 
 Kubernetes version: 1.21 or higher

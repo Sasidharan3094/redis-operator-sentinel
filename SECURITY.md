@@ -73,3 +73,32 @@ through the private channels above.
 Hardening guidance for deploying the operator in production belongs in
 documentation and examples; this file focuses on vulnerability reporting and
 supported versions.
+
+## Go toolchain (stdlib fixes)
+
+The module pins **`toolchain go1.25.9`** in [`go.mod`](go.mod). Building and
+running **govulncheck** with **Go 1.25.9** instead of **1.24.4** clears the
+following **reachable** standard-library findings that were reported against the
+older toolchain (IDs are from the [Go vulnerability database](https://pkg.go.dev/vuln)):
+
+| ID | One-line summary |
+|----|------------------|
+| GO-2026-4947 | Unexpected work during chain building in `crypto/x509`. |
+| GO-2026-4946 | Inefficient policy validation in `crypto/x509`. |
+| GO-2026-4870 | TLS 1.3 KeyUpdate handling can retain connections (DoS) in `crypto/tls`. |
+| GO-2026-4601 | Incorrect parsing of IPv6 host literals in `net/url`. |
+| GO-2026-4341 | Memory exhaustion in query parameter parsing in `net/url`. |
+| GO-2026-4340 | TLS handshake messages processed at wrong encryption level in `crypto/tls`. |
+| GO-2026-4337 | Unexpected session resumption in `crypto/tls`. |
+| GO-2025-4175 | Wildcard name verification ignored excluded DNS constraints in `crypto/x509`. |
+| GO-2025-4155 | High resource use when printing host validation errors in `crypto/x509`. |
+| GO-2025-4013 | Panic when validating certificates with DSA public keys in `crypto/x509`. |
+| GO-2025-4012 | Cookie parsing without limits can exhaust memory in `net/http`. |
+| GO-2025-4011 | DER parsing could exhaust memory in `encoding/asn1`. |
+| GO-2025-4010 | Insufficient validation of bracketed IPv6 hostnames in `net/url`. |
+| GO-2025-4009 | Quadratic cost parsing some invalid PEM in `encoding/pem`. |
+| GO-2025-4008 | ALPN error strings could leak attacker-controlled data in `crypto/tls`. |
+| GO-2025-4007 | Quadratic cost checking name constraints in `crypto/x509`. |
+| GO-2025-3956 | Unexpected paths from `LookPath` in `os/exec`. |
+
+Re-verify locally after upgrades: `make ci-govulncheck` (uses the toolchain from `go.mod`).

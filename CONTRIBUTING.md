@@ -20,8 +20,11 @@ changes, CRD and API updates, and CI improvements.
 
 - **Go:** Use the version declared in [`go.mod`](go.mod) (including the
   `toolchain` directive if present). CI uses `go-version-file: go.mod`.
-- **Docker:** Optional for local workflows that use the development image; CI
-  runs Go targets directly on the runner without Docker.
+- **Container runtime:** Optional for local workflows that use the development
+  image; CI runs Go targets directly on the runner without it. **Podman** works:
+  if `podman` is on your `PATH`, `make` uses it automatically (otherwise Docker).
+  If both are installed and you want Docker, run e.g.
+  `make CONTAINER_RUNTIME=docker docker-build`.
 - **Additional tools:** Integration tests on CI use Minikube; Helm tests require
   Helm locally when you run `make helm-test` outside CI.
 

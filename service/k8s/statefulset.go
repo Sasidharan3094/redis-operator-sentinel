@@ -12,6 +12,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -19,6 +20,27 @@ import (
 	"github.com/freshworks/redis-operator/log"
 	"github.com/freshworks/redis-operator/metrics"
 )
+
+// ResizeOnlyAnnotationKey marks a StatefulSet update as changing only container
+// resources (CPU/memory) versus the previously stored template. UpdateRedisesPods
+// reads this to decide whether the master pod can be resized in place instead of deleted.
+const ResizeOnlyAnnotationKey = "redis-failover.freshworks.com/resize-only"
+
+// isResourceOnlyChange reports whether the only difference between oldSpec and newSpec
+// is container resource requests/limits, by neutralizing that one field on copies of both
+// and comparing everything else. Uses apiequality.Semantic.DeepEqual rather than
+// reflect.DeepEqual because raw reflection can report false differences on resource.Quantity.
+func isResourceOnlyChange(oldSpec, newSpec *corev1.PodSpec) bool {
+	oldCopy := oldSpec.DeepCopy()
+	newCopy := newSpec.DeepCopy()
+	for i := range oldCopy.Containers {
+		oldCopy.Containers[i].Resources = corev1.ResourceRequirements{}
+	}
+	for i := range newCopy.Containers {
+		newCopy.Containers[i].Resources = corev1.ResourceRequirements{}
+	}
+	return apiequality.Semantic.DeepEqual(oldCopy, newCopy)
+}
 
 // StatefulSet the StatefulSet service that knows how to interact with k8s to manage them
 type StatefulSet interface {
@@ -170,6 +192,25 @@ func (s *StatefulSetService) CreateOrUpdateStatefulSet(namespace string, statefu
 	}
 	// set stored.volumeClaimTemplates
 	statefulSet.Spec.VolumeClaimTemplates = storedStatefulSet.Spec.VolumeClaimTemplates
+
+	// Dry-run the update first so the resource-only diff compares two objects that have both
+	// been through API server defaulting. storedStatefulSet came from a Get() and already has
+	// implicit defaults (terminationMessagePath, port protocol, etc.) filled in; statefulSet is
+	// a freshly-built, never-submitted Go struct that doesn't. Diffing them directly would show
+	// spurious differences from that defaulting gap alone, regardless of what actually changed.
+	dryRunResult, err := s.kubeClient.AppsV1().StatefulSets(namespace).Update(context.TODO(), statefulSet, metav1.UpdateOptions{
+		DryRun: []string{metav1.DryRunAll},
+	})
+	if err != nil {
+		return err
+	}
+
+	resourceOnlyChange := isResourceOnlyChange(&storedStatefulSet.Spec.Template.Spec, &dryRunResult.Spec.Template.Spec)
+	if statefulSet.Annotations == nil {
+		statefulSet.Annotations = map[string]string{}
+	}
+	statefulSet.Annotations[ResizeOnlyAnnotationKey] = strconv.FormatBool(resourceOnlyChange)
+
 	statefulSet.Annotations = util.MergeAnnotations(storedStatefulSet.Annotations, statefulSet.Annotations)
 	return s.UpdateStatefulSet(namespace, statefulSet)
 }

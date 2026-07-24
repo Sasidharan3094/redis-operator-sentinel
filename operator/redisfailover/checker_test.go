@@ -1162,6 +1162,12 @@ func TestUpdate(t *testing.T) {
 				for _, pod := range test.pods {
 					mrfc.On("GetRedisRevisionHash", pod.pod.ObjectMeta.Name, rf).Once().Return(pod.pod.ObjectMeta.Labels[appsv1.ControllerRevisionHashLabelKey], nil)
 					if pod.pod.ObjectMeta.Labels[appsv1.ControllerRevisionHashLabelKey] != test.ssVersion {
+						if pod.master {
+							// Non-resize-only change in this scenario: falls through to the
+							// existing delete-based rollout, same as before the in-place
+							// resize feature was added.
+							mrfc.On("GetStatefulSetResizeOnly", rf).Once().Return(false, nil)
+						}
 						mrfh.On("DeletePod", pod.pod.ObjectMeta.Name, rf).Once().Return(nil)
 						if pod.master == false {
 							next = false

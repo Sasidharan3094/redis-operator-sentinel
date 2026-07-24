@@ -39,6 +39,20 @@ rules:
     verbs:
       - "*"
   - apiGroups:
+      - ""
+    resources:
+      - pods/resize
+      - pods/eviction
+    verbs:
+      - "*"
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+  - apiGroups:
       - apps
     resources:
       - deployments

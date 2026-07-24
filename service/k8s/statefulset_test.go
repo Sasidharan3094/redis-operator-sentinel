@@ -87,10 +87,23 @@ func TestStatefulSetServiceGetCreateOrUpdate(t *testing.T) {
 			getStatefulSetResult: testStatefulSet,
 			errorOnGet:           nil,
 			errorOnCreation:      nil,
-			expActions: []kubetesting.Action{
-				newStatefulSetGetAction(testns, testStatefulSet.ObjectMeta.Name),
-				newStatefulSetUpdateAction(testns, testStatefulSet),
-			},
+			expActions: func() []kubetesting.Action {
+				// The resource-only diff check dry-runs the update first (pre-annotation
+				// object state, DryRun: All), then performs the real update (with the
+				// resize-only annotation set, based on comparing the dry-run result).
+				preAnnotation := testStatefulSet.DeepCopy()
+				postAnnotation := testStatefulSet.DeepCopy()
+				postAnnotation.Annotations = map[string]string{k8s.ResizeOnlyAnnotationKey: "true"}
+
+				dryRunAction := newStatefulSetUpdateAction(testns, preAnnotation)
+				dryRunAction.UpdateOptions = metav1.UpdateOptions{DryRun: []string{metav1.DryRunAll}}
+
+				return []kubetesting.Action{
+					newStatefulSetGetAction(testns, testStatefulSet.ObjectMeta.Name),
+					dryRunAction,
+					newStatefulSetUpdateAction(testns, postAnnotation),
+				}
+			}(),
 			expErr: false,
 		},
 	}
@@ -106,6 +119,9 @@ func TestStatefulSetServiceGetCreateOrUpdate(t *testing.T) {
 			})
 			mcli.AddReactor("create", "statefulsets", func(action kubetesting.Action) (bool, runtime.Object, error) {
 				return true, nil, test.errorOnCreation
+			})
+			mcli.AddReactor("update", "statefulsets", func(action kubetesting.Action) (bool, runtime.Object, error) {
+				return true, testStatefulSet, nil
 			})
 
 			service := k8s.NewStatefulSetService(mcli, log.Dummy, metrics.Dummy)

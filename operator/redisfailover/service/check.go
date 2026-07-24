@@ -8,6 +8,8 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	redisfailoverv1 "github.com/freshworks/redis-operator/api/redisfailover/v1"
 	"github.com/freshworks/redis-operator/log"
@@ -40,6 +42,28 @@ type RedisFailoverCheck interface {
 	IsRedisRunning(rFailover *redisfailoverv1.RedisFailover) bool
 	IsSentinelRunning(rFailover *redisfailoverv1.RedisFailover) bool
 	IsClusterRunning(rFailover *redisfailoverv1.RedisFailover) bool
+	// ComputeRequiredHeadroom returns how much additional CPU and memory must be freed on
+	// nodeName for rFailover's master pod (masterPodName) to resize to its desired spec -
+	// either may be zero/negative if that resource already fits.
+	ComputeRequiredHeadroom(rFailover *redisfailoverv1.RedisFailover, nodeName, masterPodName string) (requiredCPU, requiredMemory resource.Quantity, err error)
+	// GetStatefulSetResizeOnly returns whether the StatefulSet's most recent update was a
+	// resource-only change, i.e. whether the master pod can be resized in place instead of
+	// deleted for the currently pending revision change.
+	GetStatefulSetResizeOnly(rFailover *redisfailoverv1.RedisFailover) (bool, error)
+	// GetPodNode returns the node name podName is scheduled on.
+	GetPodNode(podName string, rFailover *redisfailoverv1.RedisFailover) (string, error)
+	// GetPodResizeCondition reports whether podName currently has a PodResizePending
+	// condition and, if so, its reason (corev1.PodReasonDeferred or corev1.PodReasonInfeasible).
+	GetPodResizeCondition(podName string, rFailover *redisfailoverv1.RedisFailover) (found bool, reason string, err error)
+	// GetResizeState reports when an in-place resize attempt on podName began, if one is
+	// currently tracked (see resizeStartedAtAnnotationKey).
+	GetResizeState(podName string, rFailover *redisfailoverv1.RedisFailover) (startedAt time.Time, exists bool, err error)
+	// PodResourcesMatchDesired reports whether podName's redis container currently has the
+	// same resources as rFailover.Spec.Redis.Resources. The absence of a PodResizePending
+	// condition alone doesn't prove a resize actually applied - it's also true when the
+	// resize call never reached the pod at all (e.g. an RBAC rejection) - so callers must
+	// check this before treating a resize as successful.
+	PodResourcesMatchDesired(podName string, rFailover *redisfailoverv1.RedisFailover) (bool, error)
 }
 
 // RedisFailoverChecker is our implementation of RedisFailoverCheck interface
@@ -490,6 +514,88 @@ func (r *RedisFailoverChecker) GetStatefulSetUpdateRevision(rFailover *redisfail
 	}
 
 	return ss.Status.UpdateRevision, nil
+}
+
+// GetStatefulSetResizeOnly returns whether the StatefulSet's most recent update was a
+// resource-only change (see k8s.ResizeOnlyAnnotationKey).
+func (r *RedisFailoverChecker) GetStatefulSetResizeOnly(rFailover *redisfailoverv1.RedisFailover) (bool, error) {
+	ss, err := r.k8sService.GetStatefulSet(rFailover.Namespace, GetRedisName(rFailover))
+	if err != nil {
+		return false, err
+	}
+	if ss == nil {
+		return false, errors.New("statefulSet not found")
+	}
+	return ss.Annotations[k8s.ResizeOnlyAnnotationKey] == "true", nil
+}
+
+// GetPodNode returns the node name podName is scheduled on.
+func (r *RedisFailoverChecker) GetPodNode(podName string, rFailover *redisfailoverv1.RedisFailover) (string, error) {
+	pod, err := r.k8sService.GetPod(rFailover.Namespace, podName)
+	if err != nil {
+		return "", err
+	}
+	if pod == nil {
+		return "", errors.New("pod not found")
+	}
+	return pod.Spec.NodeName, nil
+}
+
+// GetPodResizeCondition reports whether podName currently has a PodResizePending condition
+// and, if so, its reason.
+func (r *RedisFailoverChecker) GetPodResizeCondition(podName string, rFailover *redisfailoverv1.RedisFailover) (bool, string, error) {
+	pod, err := r.k8sService.GetPod(rFailover.Namespace, podName)
+	if err != nil {
+		return false, "", err
+	}
+	if pod == nil {
+		return false, "", errors.New("pod not found")
+	}
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodResizePending {
+			return true, cond.Reason, nil
+		}
+	}
+	return false, "", nil
+}
+
+// GetResizeState reports when an in-place resize attempt on podName began, if one is
+// currently tracked.
+func (r *RedisFailoverChecker) GetResizeState(podName string, rFailover *redisfailoverv1.RedisFailover) (time.Time, bool, error) {
+	pod, err := r.k8sService.GetPod(rFailover.Namespace, podName)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if pod == nil {
+		return time.Time{}, false, errors.New("pod not found")
+	}
+	raw, ok := pod.Annotations[resizeStartedAtAnnotationKey]
+	if !ok {
+		return time.Time{}, false, nil
+	}
+	startedAt, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return startedAt, true, nil
+}
+
+// PodResourcesMatchDesired reports whether podName's redis container currently has the same
+// resources as rFailover.Spec.Redis.Resources.
+func (r *RedisFailoverChecker) PodResourcesMatchDesired(podName string, rFailover *redisfailoverv1.RedisFailover) (bool, error) {
+	pod, err := r.k8sService.GetPod(rFailover.Namespace, podName)
+	if err != nil {
+		return false, err
+	}
+	if pod == nil {
+		return false, errors.New("pod not found")
+	}
+	for _, container := range pod.Spec.Containers {
+		if container.Name == "redis" {
+			return apiequality.Semantic.DeepEqual(container.Resources, rFailover.Spec.Redis.Resources), nil
+		}
+	}
+	return false, errors.New("redis container not found in pod")
 }
 
 // GetRedisRevisionHash returns the statefulset uid for the pod

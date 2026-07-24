@@ -20,6 +20,7 @@ type Services interface {
 	RBAC
 	Deployment
 	StatefulSet
+	Eviction
 }
 
 type services struct {
@@ -32,6 +33,7 @@ type services struct {
 	RBAC
 	Deployment
 	StatefulSet
+	Eviction
 }
 
 // New returns a new Kubernetes service.
@@ -46,5 +48,6 @@ func New(kubecli kubernetes.Interface, crdcli redisfailoverclientset.Interface, 
 		RBAC:                NewRBACService(kubecli, logger, metricsRecorder),
 		Deployment:          NewDeploymentService(kubecli, logger, metricsRecorder),
 		StatefulSet:         NewStatefulSetService(kubecli, logger, metricsRecorder),
+		Eviction:            NewEvictionService(kubecli, logger, metricsRecorder),
 	}
 }

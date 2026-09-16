@@ -193,6 +193,7 @@ jobs:
                   kubernetes-version: ${{ matrix.kubernetes }}
                   minikube-version: latest
                   driver: none
+                  container-runtime: docker
             - name: Add redisfailover CRD
               run: kubectl create -f manifests/databases.spotahome.com_redisfailovers.yaml
             - run: make ci-integration-test

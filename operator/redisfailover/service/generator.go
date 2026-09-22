@@ -23,11 +23,7 @@ const (
 	redisConfigTemplate = `slaveof 127.0.0.1 {{.Spec.Redis.Port}}
 port {{.Spec.Redis.Port}}
 tcp-keepalive 60
-{{- if .Spec.Standalone}}
-appendonly yes
-appendfsync everysec
-save ""
-{{- else}}
+{{- if not .Spec.Standalone}}
 save 900 1
 save 300 10
 {{- end}}
@@ -266,7 +262,19 @@ func generateRedisShutdownConfigMap(rf *redisfailoverv1.RedisFailover, labels ma
 	eng := EngineFor(rf)
 	cli := eng.CLIBinary()
 	authEnv := eng.CLIAuthEnvName()
-	shutdownContent := fmt.Sprintf(`master=$(%[4]s -h ${RFS_%[1]v_SERVICE_HOST} -p ${RFS_%[1]v_SERVICE_PORT_SENTINEL} --csv SENTINEL get-master-addr-by-name %[3]v | tr ',' ' ' | tr -d '\"' |cut -d' ' -f1)
+
+	var shutdownContent string
+	if rf.Standalone() {
+		// Standalone has no Sentinel to ask for the current master, and this pod is
+		// always the master — just persist and exit.
+		shutdownContent = fmt.Sprintf(`cmd="%[3]s -p %[1]v"
+if [ ! -z "${REDIS_PASSWORD}" ]; then
+	export %[2]s=${REDIS_PASSWORD}
+fi
+save_command="${cmd} save"
+eval $save_command`, port, authEnv, cli)
+	} else {
+		shutdownContent = fmt.Sprintf(`master=$(%[4]s -h ${RFS_%[1]v_SERVICE_HOST} -p ${RFS_%[1]v_SERVICE_PORT_SENTINEL} --csv SENTINEL get-master-addr-by-name %[3]v | tr ',' ' ' | tr -d '\"' |cut -d' ' -f1)
 if [ "$master" = "$(hostname -i)" ]; then
 %[4]s -h ${RFS_%[1]v_SERVICE_HOST} -p ${RFS_%[1]v_SERVICE_PORT_SENTINEL} SENTINEL failover %[3]v
 sleep 31
@@ -277,6 +285,7 @@ if [ ! -z "${REDIS_PASSWORD}" ]; then
 fi
 save_command="${cmd} save"
 eval $save_command`, rfName, port, rf.MasterName(), cli, authEnv)
+	}
 
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -300,7 +309,28 @@ func generateRedisReadinessConfigMap(rf *redisfailoverv1.RedisFailover, labels m
 	eng := EngineFor(rf)
 	cli := eng.CLIBinary()
 	authEnv := eng.CLIAuthEnvName()
-	readinessContent := fmt.Sprintf(`ROLE="role"
+
+	var readinessContent string
+	if rf.Standalone() {
+		// Standalone has no slave role to distinguish and no in-sync/master-lag checks
+		// to make — the single pod just needs to have been promoted to master.
+		readinessContent = fmt.Sprintf(`ROLE="role"
+ROLE_MASTER="role:master"
+
+cmd="%[2]s -p %[1]v"
+if [ ! -z "${REDIS_PASSWORD}" ]; then
+	export %[3]s=${REDIS_PASSWORD}
+fi
+
+cmd="${cmd} info replication"
+
+role=$(echo "${cmd} | grep $ROLE | tr -d \"\\r\" | tr -d \"\\n\"" | xargs -0 sh -c)
+if [ "$role" = "$ROLE_MASTER" ]; then
+	exit 0
+fi
+exit 1`, port, cli, authEnv)
+	} else {
+		readinessContent = fmt.Sprintf(`ROLE="role"
 ROLE_MASTER="role:master"
 ROLE_SLAVE="role:slave"
 IN_SYNC="master_sync_in_progress:1"
@@ -340,6 +370,7 @@ case $role in
 				echo "unexpected"
 				exit 1
 esac`, port, cli, authEnv)
+	}
 
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{

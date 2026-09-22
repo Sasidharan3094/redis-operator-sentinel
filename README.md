@@ -509,7 +509,19 @@ spec:
 
 Setting `standalone: true` forces `redis.replicas` to `1` and `sentinel.replicas` to `0` — no Sentinel Service, ConfigMap, or Deployment will be created, and the single Redis pod is always treated as master. This is mutually exclusive with `bootstrapNode`.
 
-Standalone mode also defaults the generated `redis.conf` to AOF-only persistence (`appendonly yes`, `appendfsync everysec`, RDB snapshotting disabled) instead of the periodic RDB `save` points used in the default (Sentinel-backed) topology.
+Unlike the default (Sentinel-backed) topology, standalone mode sets no `save` directive in the generated `redis.conf` — Redis boots with whichever persistence default ships with the chosen image, and the operator does not force AOF or a specific RDB schedule. Choose either explicitly via `redis.customConfig`, e.g.:
+
+```yaml
+spec:
+  standalone: true
+  redis:
+    customConfig:
+      - "appendonly yes"
+      - "appendfsync everysec"
+      - 'save ""'
+```
+
+The readiness probe and shutdown hook are also simplified for standalone: readiness only checks that the pod has been promoted to master (there is no slave role or replication-lag state to check), and the shutdown hook just persists and exits (there is no Sentinel to ask for the current master or to trigger a failover on).
 
 ### Default versions
 

@@ -555,11 +555,11 @@ func TestRedisConfigMapPersistence(t *testing.T) {
 		standalone bool
 	}{
 		{
-			name:       "default RDB-based persistence",
+			name:       "sentinel-backed keeps tuned RDB save points",
 			standalone: false,
 		},
 		{
-			name:       "standalone AOF-only persistence",
+			name:       "standalone omits save directives, no forced AOF",
 			standalone: true,
 		},
 	}
@@ -584,18 +584,71 @@ func TestRedisConfigMapPersistence(t *testing.T) {
 			assert.NoError(err)
 
 			content := generatedConfigMap.Data["redis.conf"]
+			assert.NotContains(content, "appendonly yes")
 			if test.standalone {
-				assert.Contains(content, "appendonly yes")
-				assert.Contains(content, "appendfsync everysec")
-				assert.Contains(content, `save ""`)
 				assert.NotContains(content, "save 900 1")
+				assert.NotContains(content, "save 300 10")
+				assert.NotContains(content, `save ""`)
 			} else {
 				assert.Contains(content, "save 900 1")
 				assert.Contains(content, "save 300 10")
-				assert.NotContains(content, "appendonly yes")
 			}
 		})
 	}
+}
+
+func TestRedisReadinessConfigMapStandalone(t *testing.T) {
+	// Standalone has no slave role and no in-sync/master-lag concepts to check — it's
+	// either promoted to master or it isn't.
+	assert := assert.New(t)
+
+	rf := generateRF()
+	rf.Spec.Standalone = true
+
+	var generatedConfigMap corev1.ConfigMap
+
+	ms := &mK8SService.Services{}
+	ms.On("CreateOrUpdateConfigMap", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
+		cm := args.Get(1).(*corev1.ConfigMap)
+		generatedConfigMap = *cm
+	}).Return(nil)
+
+	client := rfservice.NewRedisFailoverKubeClient(ms, log.Dummy, metrics.Dummy)
+	err := client.EnsureRedisReadinessConfigMap(rf, nil, nil)
+	assert.NoError(err)
+
+	content := generatedConfigMap.Data["ready.sh"]
+	assert.Contains(content, `ROLE_MASTER="role:master"`)
+	assert.NotContains(content, "ROLE_SLAVE")
+	assert.NotContains(content, "IN_SYNC")
+	assert.NotContains(content, "NO_MASTER")
+	assert.NotContains(content, "check_slave")
+}
+
+func TestRedisShutdownConfigMapStandalone(t *testing.T) {
+	// Standalone has no Sentinel Service, so there is no RFS_*_SERVICE_PORT_SENTINEL
+	// env var to query and no failover to trigger on shutdown — just persist and exit.
+	assert := assert.New(t)
+
+	rf := generateRF()
+	rf.Spec.Standalone = true
+
+	var generatedConfigMap corev1.ConfigMap
+
+	ms := &mK8SService.Services{}
+	ms.On("CreateOrUpdateConfigMap", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
+		cm := args.Get(1).(*corev1.ConfigMap)
+		generatedConfigMap = *cm
+	}).Return(nil)
+
+	client := rfservice.NewRedisFailoverKubeClient(ms, log.Dummy, metrics.Dummy)
+	err := client.EnsureRedisShutdownConfigMap(rf, nil, nil)
+	assert.NoError(err)
+
+	content := generatedConfigMap.Data["shutdown.sh"]
+	assert.NotContains(content, "SENTINEL")
+	assert.NotContains(content, "SERVICE_PORT_SENTINEL")
+	assert.Contains(content, "save")
 }
 
 func TestRedisStatefulSetPodDisruptionBudget(t *testing.T) {

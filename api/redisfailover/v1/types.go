@@ -43,9 +43,10 @@ type RedisFailoverSpec struct {
 	BootstrapNode  *BootstrapSettings `json:"bootstrapNode,omitempty"`
 	// Standalone runs a single self-contained Redis instance with no Sentinel deployed at
 	// all. Mutually exclusive with BootstrapNode. Forces redis.replicas to 1 and
-	// sentinel.replicas to 0, and defaults the generated redis.conf to AOF-only
-	// persistence (appendonly yes, RDB snapshotting disabled) instead of periodic RDB
-	// saves. This differs from a plain replicas:1 CR, which still requires Sentinel.
+	// sentinel.replicas to 0. This differs from a plain replicas:1 CR, which still
+	// requires Sentinel. Unlike the Sentinel-backed topology, the generated redis.conf
+	// sets no save directive, leaving Redis on its own compiled-in persistence default;
+	// use redis.customConfig to pick RDB save points or AOF explicitly.
 	// +optional
 	Standalone bool `json:"standalone,omitempty"`
 }

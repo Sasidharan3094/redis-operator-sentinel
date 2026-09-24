@@ -625,13 +625,15 @@ func TestRedisReadinessConfigMapStandalone(t *testing.T) {
 	assert.NotContains(content, "check_slave")
 }
 
-func TestRedisShutdownConfigMapStandalone(t *testing.T) {
-	// Standalone has no Sentinel Service, so there is no RFS_*_SERVICE_PORT_SENTINEL
-	// env var to query and no failover to trigger on shutdown — just persist and exit.
+func TestRedisReadinessConfigMapStandaloneBootstrapping(t *testing.T) {
+	// A standalone pod still seeding from bootstrapNode is legitimately role:slave —
+	// readiness must accept a healthy, caught-up slave, not master-only, or it would
+	// never pass for as long as bootstrapNode stays set.
 	assert := assert.New(t)
 
 	rf := generateRF()
 	rf.Spec.Standalone = true
+	rf.Spec.BootstrapNode = &redisfailoverv1.BootstrapSettings{Host: "10.0.0.1", Port: "6379"}
 
 	var generatedConfigMap corev1.ConfigMap
 
@@ -642,13 +644,46 @@ func TestRedisShutdownConfigMapStandalone(t *testing.T) {
 	}).Return(nil)
 
 	client := rfservice.NewRedisFailoverKubeClient(ms, log.Dummy, metrics.Dummy)
-	err := client.EnsureRedisShutdownConfigMap(rf, nil, nil)
+	err := client.EnsureRedisReadinessConfigMap(rf, nil, nil)
 	assert.NoError(err)
 
-	content := generatedConfigMap.Data["shutdown.sh"]
-	assert.NotContains(content, "SENTINEL")
-	assert.NotContains(content, "SERVICE_PORT_SENTINEL")
-	assert.Contains(content, "save")
+	content := generatedConfigMap.Data["ready.sh"]
+	assert.Contains(content, `ROLE_SLAVE="role:slave"`)
+	assert.Contains(content, "check_slave")
+	assert.Contains(content, `IN_SYNC="master_sync_in_progress:1"`)
+	assert.Contains(content, `NO_MASTER="master_host:127.0.0.1"`)
+}
+
+func TestRedisStatefulSetStandaloneHasNoShutdownScript(t *testing.T) {
+	// Standalone has no Sentinel to fail over to, and Redis's own default save points
+	// already trigger a save on SIGTERM, so there is no shutdown ConfigMap, no volume
+	// mount for it, and no PreStop hook at all.
+	assert := assert.New(t)
+
+	rf := generateRF()
+	rf.Spec.Standalone = true
+
+	var generatedStatefulSet appsv1.StatefulSet
+
+	ms := &mK8SService.Services{}
+	ms.On("GetStatefulSet", namespace, mock.Anything).Once().Return(nil, errors.NewNotFound(schema.GroupResource{}, ""))
+	ms.On("CreateOrUpdateStatefulSet", namespace, mock.Anything).Once().Run(func(args mock.Arguments) {
+		ss := args.Get(1).(*appsv1.StatefulSet)
+		generatedStatefulSet = *ss
+	}).Return(nil)
+
+	client := rfservice.NewRedisFailoverKubeClient(ms, log.Dummy, metrics.Dummy)
+	err := client.EnsureRedisStatefulset(rf, nil, nil)
+	assert.NoError(err)
+
+	container := generatedStatefulSet.Spec.Template.Spec.Containers[0]
+	assert.Nil(container.Lifecycle)
+	for _, vm := range container.VolumeMounts {
+		assert.NotEqual("redis-shutdown-config", vm.Name)
+	}
+	for _, v := range generatedStatefulSet.Spec.Template.Spec.Volumes {
+		assert.NotEqual("redis-shutdown-config", v.Name)
+	}
 }
 
 func TestRedisStatefulSetPodDisruptionBudget(t *testing.T) {

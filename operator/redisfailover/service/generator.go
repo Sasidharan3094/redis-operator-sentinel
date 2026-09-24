@@ -263,18 +263,11 @@ func generateRedisShutdownConfigMap(rf *redisfailoverv1.RedisFailover, labels ma
 	cli := eng.CLIBinary()
 	authEnv := eng.CLIAuthEnvName()
 
-	var shutdownContent string
-	if rf.Standalone() {
-		// Standalone has no Sentinel to ask for the current master, and this pod is
-		// always the master — just persist and exit.
-		shutdownContent = fmt.Sprintf(`cmd="%[3]s -p %[1]v"
-if [ ! -z "${REDIS_PASSWORD}" ]; then
-	export %[2]s=${REDIS_PASSWORD}
-fi
-save_command="${cmd} save"
-eval $save_command`, port, authEnv, cli)
-	} else {
-		shutdownContent = fmt.Sprintf(`master=$(%[4]s -h ${RFS_%[1]v_SERVICE_HOST} -p ${RFS_%[1]v_SERVICE_PORT_SENTINEL} --csv SENTINEL get-master-addr-by-name %[3]v | tr ',' ' ' | tr -d '\"' |cut -d' ' -f1)
+	// Not called for standalone (see EnsureNotPresentRedisShutdownConfigMap): a
+	// standalone pod has no Sentinel to fail over to and no PreStop hook mounting
+	// this script, since Redis's own default save points already trigger a save on
+	// SIGTERM.
+	shutdownContent := fmt.Sprintf(`master=$(%[4]s -h ${RFS_%[1]v_SERVICE_HOST} -p ${RFS_%[1]v_SERVICE_PORT_SENTINEL} --csv SENTINEL get-master-addr-by-name %[3]v | tr ',' ' ' | tr -d '\"' |cut -d' ' -f1)
 if [ "$master" = "$(hostname -i)" ]; then
 %[4]s -h ${RFS_%[1]v_SERVICE_HOST} -p ${RFS_%[1]v_SERVICE_PORT_SENTINEL} SENTINEL failover %[3]v
 sleep 31
@@ -285,7 +278,6 @@ if [ ! -z "${REDIS_PASSWORD}" ]; then
 fi
 save_command="${cmd} save"
 eval $save_command`, rfName, port, rf.MasterName(), cli, authEnv)
-	}
 
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -311,9 +303,12 @@ func generateRedisReadinessConfigMap(rf *redisfailoverv1.RedisFailover, labels m
 	authEnv := eng.CLIAuthEnvName()
 
 	var readinessContent string
-	if rf.Standalone() {
-		// Standalone has no slave role to distinguish and no in-sync/master-lag checks
-		// to make — the single pod just needs to have been promoted to master.
+	if rf.Standalone() && !rf.Bootstrapping() {
+		// Standalone in its steady state (no bootstrapNode) has no slave role to
+		// distinguish and no in-sync/master-lag checks to make — the single pod just
+		// needs to have been promoted to master. A standalone pod that's still
+		// bootstrapping from an external host is legitimately role:slave, so it falls
+		// through to the role-switch script below instead, same as normal HA slaves.
 		readinessContent = fmt.Sprintf(`ROLE="role"
 ROLE_MASTER="role:master"
 
@@ -330,6 +325,9 @@ if [ "$role" = "$ROLE_MASTER" ]; then
 fi
 exit 1`, port, cli, authEnv)
 	} else {
+		// Normal Sentinel-backed HA, and a standalone pod still bootstrapping from an
+		// external host: both need "ready" to mean master OR a healthy, caught-up
+		// slave — not master-only.
 		readinessContent = fmt.Sprintf(`ROLE="role"
 ROLE_MASTER="role:master"
 ROLE_SLAVE="role:slave"
@@ -450,13 +448,6 @@ func generateRedisStatefulSet(rf *redisfailoverv1.RedisFailover, labels map[stri
 							VolumeMounts: volumeMounts,
 							Command:      redisCommand,
 							Resources:    rf.Spec.Redis.Resources,
-							Lifecycle: &corev1.Lifecycle{
-								PreStop: &corev1.LifecycleHandler{
-									Exec: &corev1.ExecAction{
-										Command: []string{"/bin/sh", "/redis-shutdown/shutdown.sh"},
-									},
-								},
-							},
 						},
 					},
 					Volumes: volumes,
@@ -486,6 +477,18 @@ func generateRedisStatefulSet(rf *redisfailoverv1.RedisFailover, labels map[stri
 		}
 		ss.Spec.VolumeClaimTemplates = []corev1.PersistentVolumeClaim{
 			pvc,
+		}
+	}
+
+	if !rf.Standalone() {
+		// Standalone has no Sentinel to fail over to, and Redis's own default save
+		// points already trigger a save on SIGTERM — no PreStop hook needed.
+		ss.Spec.Template.Spec.Containers[0].Lifecycle = &corev1.Lifecycle{
+			PreStop: &corev1.LifecycleHandler{
+				Exec: &corev1.ExecAction{
+					Command: []string{"/bin/sh", "/redis-shutdown/shutdown.sh"},
+				},
+			},
 		}
 	}
 
@@ -913,19 +916,25 @@ func getRedisVolumeMounts(rf *redisfailoverv1.RedisFailover) []corev1.VolumeMoun
 			Name:      redisConfigurationVolumeName,
 			MountPath: "/redis",
 		},
-		{
+	}
+
+	if !rf.Standalone() {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      redisShutdownConfigurationVolumeName,
 			MountPath: "/redis-shutdown",
-		},
-		{
+		})
+	}
+
+	volumeMounts = append(volumeMounts,
+		corev1.VolumeMount{
 			Name:      redisReadinessVolumeName,
 			MountPath: "/redis-readiness",
 		},
-		{
+		corev1.VolumeMount{
 			Name:      getRedisDataVolumeName(rf),
 			MountPath: "/data",
 		},
-	}
+	)
 
 	if rf.Spec.Redis.StartupConfigMap != "" {
 		startupVolumeMount := corev1.VolumeMount{
@@ -967,7 +976,6 @@ func getSentinelVolumeMounts(rf *redisfailoverv1.RedisFailover) []corev1.VolumeM
 
 func getRedisVolumes(rf *redisfailoverv1.RedisFailover) []corev1.Volume {
 	configMapName := GetRedisName(rf)
-	shutdownConfigMapName := GetRedisShutdownConfigMapName(rf)
 	readinessConfigMapName := GetRedisReadinessName(rf)
 
 	executeMode := int32(0744)
@@ -982,7 +990,11 @@ func getRedisVolumes(rf *redisfailoverv1.RedisFailover) []corev1.Volume {
 				},
 			},
 		},
-		{
+	}
+
+	if !rf.Standalone() {
+		shutdownConfigMapName := GetRedisShutdownConfigMapName(rf)
+		volumes = append(volumes, corev1.Volume{
 			Name: redisShutdownConfigurationVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -992,19 +1004,20 @@ func getRedisVolumes(rf *redisfailoverv1.RedisFailover) []corev1.Volume {
 					DefaultMode: &executeMode,
 				},
 			},
-		},
-		{
-			Name: redisReadinessVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: readinessConfigMapName,
-					},
-					DefaultMode: &executeMode,
+		})
+	}
+
+	volumes = append(volumes, corev1.Volume{
+		Name: redisReadinessVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: readinessConfigMapName,
 				},
+				DefaultMode: &executeMode,
 			},
 		},
-	}
+	})
 
 	if rf.Spec.Redis.StartupConfigMap != "" {
 		startupVolumeName := rf.Spec.Redis.StartupConfigMap

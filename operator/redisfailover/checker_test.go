@@ -758,6 +758,80 @@ func TestCheckAndHealStandaloneMode(t *testing.T) {
 	}
 }
 
+func TestCheckAndHealStandaloneBootstrapMode(t *testing.T) {
+	bootstrapHost := "127.0.0.1"
+	bootstrapPort := "6379"
+
+	tests := []struct {
+		name                string
+		redisRunning        bool
+		setExternalMasterOK bool
+		expectedError       bool
+	}{
+		{
+			name:         "redis not yet running, wait",
+			redisRunning: false,
+		},
+		{
+			name:                "still bootstrapping, keeps replicating from the external host",
+			redisRunning:        true,
+			setExternalMasterOK: true,
+		},
+		{
+			name:                "SetExternalMasterOnAll fails, error propagates",
+			redisRunning:        true,
+			setExternalMasterOK: false,
+			expectedError:       true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+
+			rf := generateRF(false, true, false)
+			rf.Spec.Standalone = true
+			rf.Spec.Redis.Replicas = 1
+
+			redis := "0.0.0.1"
+
+			config := generateConfig()
+			mk := &mK8SService.Services{}
+			mrfs := &mRFService.RedisFailoverClient{}
+			mrfc := &mRFService.RedisFailoverCheck{}
+			mrfh := &mRFService.RedisFailoverHeal{}
+
+			mrfc.On("IsRedisRunning", rf).Once().Return(test.redisRunning)
+
+			if test.redisRunning {
+				// once for UpdateRedisesPods, once for applyRedisCustomConfig.
+				mrfc.On("GetRedisesIPs", rf).Twice().Return([]string{redis}, nil)
+				mrfh.On("SetRedisCustomConfig", redis, rf).Once().Return(nil)
+				mrfc.On("CheckRedisSlavesReady", redis, rf).Once().Return(true, nil)
+				mrfc.On("GetStatefulSetUpdateRevision", rf).Once().Return("1", nil)
+				mrfc.On("GetRedisesSlavesPods", rf).Once().Return([]string{}, nil)
+
+				if test.setExternalMasterOK {
+					mrfh.On("SetExternalMasterOnAll", bootstrapHost, bootstrapPort, rf).Once().Return(nil)
+				} else {
+					mrfh.On("SetExternalMasterOnAll", bootstrapHost, bootstrapPort, rf).Once().Return(errors.New("boom"))
+				}
+			}
+
+			handler := rfOperator.NewRedisFailoverHandler(config, mrfs, mrfc, mrfh, mk, metrics.Dummy, log.Dummy)
+			err := handler.CheckAndHeal(rf)
+
+			if test.expectedError {
+				assert.Error(err)
+			} else {
+				assert.NoError(err)
+			}
+			mrfc.AssertExpectations(t)
+			mrfh.AssertExpectations(t)
+		})
+	}
+}
+
 func TestUpdate(t *testing.T) {
 	type podStatus struct {
 		pod    corev1.Pod

@@ -41,9 +41,10 @@ func (r *RedisFailover) Validate() error {
 	}
 
 	if r.Spec.Standalone {
-		if r.Bootstrapping() {
-			return errors.New("standalone and bootstrapNode are mutually exclusive")
-		}
+		// bootstrapNode is allowed alongside standalone: the single pod replicates
+		// from bootstrapNode.Host until the user removes bootstrapNode from the spec,
+		// at which point checkAndHealStandaloneMode promotes it via the existing
+		// zero-masters/SetOldestAsMaster path. See CheckAndHeal in checker.go.
 		if r.Spec.Redis.Replicas != 0 && r.Spec.Redis.Replicas != 1 {
 			return errors.New("standalone mode requires redis.replicas to be 1 (or omitted)")
 		}

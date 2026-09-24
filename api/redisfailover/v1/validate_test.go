@@ -85,11 +85,11 @@ func TestValidate(t *testing.T) {
 			rfStandalone: true,
 		},
 		{
-			name:            "Standalone and BootstrapNode are mutually exclusive",
-			rfName:          "test",
-			rfStandalone:    true,
-			rfBootstrapNode: &BootstrapSettings{Host: "127.0.0.1"},
-			expectedError:   "standalone and bootstrapNode are mutually exclusive",
+			name:                  "Standalone allows BootstrapNode, to seed from an external host",
+			rfName:                "test",
+			rfStandalone:          true,
+			rfBootstrapNode:       &BootstrapSettings{Host: "127.0.0.1"},
+			expectedBootstrapNode: &BootstrapSettings{Host: "127.0.0.1", Port: "6379"},
 		},
 		{
 			name:            "Standalone rejects an explicit conflicting replica count",

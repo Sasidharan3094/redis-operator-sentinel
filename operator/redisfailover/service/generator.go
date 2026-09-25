@@ -327,7 +327,8 @@ exit 1`, port, cli, authEnv)
 	} else {
 		// Normal Sentinel-backed HA, and a standalone pod still bootstrapping from an
 		// external host: both need "ready" to mean master OR a healthy, caught-up
-		// slave — not master-only.
+		// slave — not master-only. A bootstrapping standalone pod is legitimately
+		// role:slave until removing bootstrapNode hands it to the branch above.
 		readinessContent = fmt.Sprintf(`ROLE="role"
 ROLE_MASTER="role:master"
 ROLE_SLAVE="role:slave"

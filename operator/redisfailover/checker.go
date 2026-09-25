@@ -87,7 +87,14 @@ func (r *RedisFailoverHandler) UpdateRedisesPods(rf *redisfailoverv1.RedisFailov
 func (r *RedisFailoverHandler) CheckAndHeal(rf *redisfailoverv1.RedisFailover) error {
 	if rf.Standalone() {
 		if rf.Bootstrapping() {
-			return r.checkAndHealStandaloneBootstrapMode(rf)
+			// A standalone pod still seeding from an external host needs exactly the
+			// same handling as a full Sentinel-backed bootstrapping RedisFailover:
+			// keep replicating from bootstrapNode, and — since SentinelsAllowed()
+			// already accounts for Standalone — configure Sentinel to monitor it too
+			// when bootstrapNode.AllowSentinels is set. Nothing in
+			// checkAndHealBootstrapMode is standalone-specific, so reuse it directly
+			// rather than duplicating it.
+			return r.checkAndHealBootstrapMode(rf)
 		}
 		return r.checkAndHealStandaloneMode(rf)
 	}
@@ -285,42 +292,6 @@ func (r *RedisFailoverHandler) checkAndHealBootstrapMode(rf *redisfailoverv1.Red
 		return r.checkAndHealSentinels(rf, sentinels)
 	}
 	return nil
-}
-
-// checkAndHealStandaloneBootstrapMode handles a standalone RedisFailover that is still
-// seeding its data from an external bootstrapNode host: it keeps the single pod
-// replicating from that host on every reconcile, same as checkAndHealBootstrapMode
-// does for a full Sentinel-backed RedisFailover, just without any Sentinel bookkeeping
-// (SentinelsAllowed() is always false while standalone).
-//
-// There is no automatic cutover here by design: as long as bootstrapNode stays set,
-// this keeps re-asserting replication from it, every reconcile, indefinitely. Once
-// the operator (or a human) is satisfied the pod has caught up, removing bootstrapNode
-// from the spec is what hands control to the unmodified checkAndHealStandaloneMode
-// below, whose existing zero-masters/SetOldestAsMaster path promotes the pod via a
-// plain SLAVEOF NO ONE, which stops replication without discarding the data already
-// synced.
-func (r *RedisFailoverHandler) checkAndHealStandaloneBootstrapMode(rf *redisfailoverv1.RedisFailover) error {
-	if !r.rfChecker.IsRedisRunning(rf) {
-		setRedisCheckerMetrics(r.mClient, "redis", rf.Namespace, rf.Name, metrics.REDIS_REPLICA_MISMATCH, metrics.NOT_APPLICABLE, errors.New("not all replicas running"))
-		r.logger.WithField("redisfailover", rf.ObjectMeta.Name).WithField("namespace", rf.ObjectMeta.Namespace).Debugf("Number of redis mismatch, waiting for redis statefulset reconcile")
-		return nil
-	}
-
-	err := r.UpdateRedisesPods(rf)
-	if err != nil {
-		return err
-	}
-	err = r.applyRedisCustomConfig(rf)
-	setRedisCheckerMetrics(r.mClient, "redis", rf.Namespace, rf.Name, metrics.APPLY_REDIS_CONFIG, metrics.NOT_APPLICABLE, err)
-	if err != nil {
-		return err
-	}
-
-	bootstrapSettings := rf.Spec.BootstrapNode
-	err = r.rfHealer.SetExternalMasterOnAll(bootstrapSettings.Host, bootstrapSettings.Port, rf)
-	setRedisCheckerMetrics(r.mClient, "redis", rf.Namespace, rf.Name, metrics.APPLY_EXTERNAL_MASTER, metrics.NOT_APPLICABLE, err)
-	return err
 }
 
 // checkAndHealStandaloneMode handles a RedisFailover with no Sentinel at all: a single

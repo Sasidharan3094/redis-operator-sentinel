@@ -11,10 +11,11 @@ func (r *RedisFailover) Standalone() bool {
 	return r.Spec.Standalone
 }
 
-// SentinelsAllowed returns true if not Standalone, and either not Bootstrapping or
-// BootstrapNode settings allow sentinels to exist.
+// SentinelsAllowed returns true if not Standalone (or Standalone but still seeding
+// from BootstrapNode, same as non-standalone bootstrapping), and either not
+// Bootstrapping or BootstrapNode settings allow sentinels to exist.
 func (r *RedisFailover) SentinelsAllowed() bool {
-	if r.Standalone() {
+	if r.Standalone() && !r.Bootstrapping() {
 		return false
 	}
 	bootstrapping := r.Bootstrapping()

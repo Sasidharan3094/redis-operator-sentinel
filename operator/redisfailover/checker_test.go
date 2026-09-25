@@ -758,7 +758,12 @@ func TestCheckAndHealStandaloneMode(t *testing.T) {
 	}
 }
 
-func TestCheckAndHealStandaloneBootstrapMode(t *testing.T) {
+func TestCheckAndHealStandaloneWhileBootstrapping(t *testing.T) {
+	// Standalone + Bootstrapping dispatches to the same checkAndHealBootstrapMode used
+	// by a full Sentinel-backed RedisFailover — nothing in it is standalone-specific,
+	// so this also covers Sentinel getting configured to monitor bootstrapNode.Host
+	// when allowSentinels is set (previously SentinelsAllowed() hardcoded false for
+	// any standalone RF, so Sentinel was silently never created at all).
 	bootstrapHost := "127.0.0.1"
 	bootstrapPort := "6379"
 
@@ -766,6 +771,7 @@ func TestCheckAndHealStandaloneBootstrapMode(t *testing.T) {
 		name                string
 		redisRunning        bool
 		setExternalMasterOK bool
+		allowSentinels      bool
 		expectedError       bool
 	}{
 		{
@@ -783,6 +789,12 @@ func TestCheckAndHealStandaloneBootstrapMode(t *testing.T) {
 			setExternalMasterOK: false,
 			expectedError:       true,
 		},
+		{
+			name:                "allowSentinels configures sentinel to monitor the bootstrap host",
+			redisRunning:        true,
+			setExternalMasterOK: true,
+			allowSentinels:      true,
+		},
 	}
 
 	for _, test := range tests {
@@ -792,8 +804,10 @@ func TestCheckAndHealStandaloneBootstrapMode(t *testing.T) {
 			rf := generateRF(false, true, false)
 			rf.Spec.Standalone = true
 			rf.Spec.Redis.Replicas = 1
+			rf.Spec.BootstrapNode.AllowSentinels = test.allowSentinels
 
 			redis := "0.0.0.1"
+			sentinel := "1.1.1.1"
 
 			config := generateConfig()
 			mk := &mK8SService.Services{}
@@ -815,6 +829,15 @@ func TestCheckAndHealStandaloneBootstrapMode(t *testing.T) {
 					mrfh.On("SetExternalMasterOnAll", bootstrapHost, bootstrapPort, rf).Once().Return(nil)
 				} else {
 					mrfh.On("SetExternalMasterOnAll", bootstrapHost, bootstrapPort, rf).Once().Return(errors.New("boom"))
+				}
+
+				if test.allowSentinels && test.setExternalMasterOK {
+					mrfc.On("IsSentinelRunning", rf).Once().Return(true)
+					mrfc.On("GetSentinelsIPs", rf).Once().Return([]string{sentinel}, nil)
+					mrfc.On("CheckSentinelMonitor", sentinel, rf.MasterName(), bootstrapHost, bootstrapPort).Once().Return(nil)
+					mrfc.On("CheckSentinelNumberInMemory", sentinel, rf).Once().Return(nil)
+					mrfc.On("CheckSentinelSlavesNumberInMemory", sentinel, rf).Once().Return(nil)
+					mrfh.On("SetSentinelCustomConfig", sentinel, rf).Once().Return(nil)
 				}
 			}
 

@@ -49,3 +49,34 @@ func TestSentinelsAllowedWithStandalone(t *testing.T) {
 	rf := generateStandaloneRedisFailover("test", true)
 	assert.False(t, rf.SentinelsAllowed())
 }
+
+func TestSentinelsAllowedWithStandaloneBootstrapping(t *testing.T) {
+	tests := []struct {
+		name           string
+		allowSentinels bool
+		expectation    bool
+	}{
+		{
+			name:           "bootstrapping without allowSentinels",
+			allowSentinels: false,
+			expectation:    false,
+		},
+		{
+			name:           "bootstrapping with allowSentinels",
+			allowSentinels: true,
+			expectation:    true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rf := generateStandaloneRedisFailover("test", true)
+			rf.Spec.BootstrapNode = &BootstrapSettings{
+				Host:           "127.0.0.1",
+				Port:           "6379",
+				AllowSentinels: test.allowSentinels,
+			}
+			assert.Equal(t, test.expectation, rf.SentinelsAllowed())
+		})
+	}
+}

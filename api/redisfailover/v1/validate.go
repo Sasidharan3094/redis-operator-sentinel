@@ -71,7 +71,10 @@ func (r *RedisFailover) Validate() error {
 		r.Spec.Redis.ReservedPodMemoryPercent = defaultReservedPodMemoryPercent
 	}
 
-	if r.Spec.Sentinel.Replicas <= 0 && !r.Spec.Standalone {
+	// Standalone normally has no Sentinel at all, so this stays 0 unless a
+	// standalone pod is still bootstrapping from an external host with
+	// allowSentinels — same condition as SentinelsAllowed().
+	if r.Spec.Sentinel.Replicas <= 0 && (!r.Spec.Standalone || r.SentinelsAllowed()) {
 		r.Spec.Sentinel.Replicas = defaultSentinelNumber
 	}
 

@@ -98,6 +98,13 @@ func TestValidate(t *testing.T) {
 			rfRedisReplicas: 3,
 			expectedError:   "standalone mode requires redis.replicas to be 1",
 		},
+		{
+			name:                  "Standalone bootstrapping with allowSentinels populates sentinel defaults",
+			rfName:                "test",
+			rfStandalone:          true,
+			rfBootstrapNode:       &BootstrapSettings{Host: "127.0.0.1", AllowSentinels: true},
+			expectedBootstrapNode: &BootstrapSettings{Host: "127.0.0.1", Port: "6379", AllowSentinels: true},
+		},
 	}
 
 	for _, test := range tests {
@@ -141,6 +148,11 @@ func TestValidate(t *testing.T) {
 				if test.rfStandalone {
 					expectedRedisReplicas = 1
 					expectedSentinelReplicas = 0
+					// A standalone pod still bootstrapping from an external host with
+					// allowSentinels is the one exception: same as SentinelsAllowed().
+					if test.rfBootstrapNode != nil && test.rfBootstrapNode.AllowSentinels {
+						expectedSentinelReplicas = int32(defaultSentinelNumber)
+					}
 				}
 
 				expectedRF := &RedisFailover{
